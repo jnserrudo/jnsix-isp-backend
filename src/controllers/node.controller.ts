@@ -1,0 +1,155 @@
+import { Request, Response } from 'express';
+import prisma from '../services/db.service';
+import logger from '../utils/logger';
+import { MikrotikService } from '../services/mikrotik.service';
+
+export class NodeController {
+  static async list(req: Request, res: Response) {
+    try {
+      const nodes = await prisma.node.findMany({
+        orderBy: { name: 'asc' },
+      });
+      return res.json(nodes);
+    } catch (err: any) {
+      logger.error(`Error listando nodos: ${err.message}`);
+      return res.status(500).json({ error: 'Error al obtener nodos' });
+    }
+  }
+
+  static async getById(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const node = await prisma.node.findUnique({ where: { id } });
+      if (!node) return res.status(404).json({ error: 'Nodo no encontrado' });
+      return res.json(node);
+    } catch (err: any) {
+      logger.error(`Error obteniendo nodo: ${err.message}`);
+      return res.status(500).json({ error: 'Error al obtener nodo' });
+    }
+  }
+
+  static async create(req: Request, res: Response) {
+    try {
+      const { name, address, latitude, longitude, mikrotikHost, mikrotikPort, mikrotikUser, mikrotikPassword, oltHost, oltType, notes } = req.body;
+      if (!name || !mikrotikHost || !mikrotikUser || !mikrotikPassword) {
+        return res.status(400).json({ error: 'Nombre, IP host, usuario y password del MikroTik son requeridos' });
+      }
+
+      const node = await prisma.node.create({
+        data: {
+          name,
+          address,
+          latitude: latitude ? Number(latitude) : null,
+          longitude: longitude ? Number(longitude) : null,
+          mikrotikHost,
+          mikrotikPort: mikrotikPort ? Number(mikrotikPort) : 8728,
+          mikrotikUser,
+          mikrotikPassword,
+          oltHost,
+          oltType,
+          notes,
+        },
+      });
+      return res.status(201).json(node);
+    } catch (err: any) {
+      logger.error(`Error creando nodo: ${err.message}`);
+      return res.status(500).json({ error: 'Error al crear nodo' });
+    }
+  }
+
+  static async update(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { name, address, latitude, longitude, mikrotikHost, mikrotikPort, mikrotikUser, mikrotikPassword, oltHost, oltType, notes, isActive } = req.body;
+
+      const node = await prisma.node.findUnique({ where: { id } });
+      if (!node) return res.status(404).json({ error: 'Nodo no encontrado' });
+
+      const updated = await prisma.node.update({
+        where: { id },
+        data: {
+          name,
+          address,
+          latitude: latitude !== undefined ? (latitude ? Number(latitude) : null) : undefined,
+          longitude: longitude !== undefined ? (longitude ? Number(longitude) : null) : undefined,
+          mikrotikHost,
+          mikrotikPort: mikrotikPort !== undefined ? Number(mikrotikPort) : undefined,
+          mikrotikUser,
+          mikrotikPassword,
+          oltHost,
+          oltType,
+          notes,
+          isActive,
+        },
+      });
+      return res.json(updated);
+    } catch (err: any) {
+      logger.error(`Error actualizando nodo: ${err.message}`);
+      return res.status(500).json({ error: 'Error al actualizar nodo' });
+    }
+  }
+
+  static async delete(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const inUse = await prisma.serviceContract.findFirst({ where: { nodeId: id } });
+      if (inUse) {
+        return res.status(400).json({ error: 'No se puede eliminar el nodo porque tiene clientes asignados' });
+      }
+
+      await prisma.node.delete({ where: { id } });
+      return res.json({ message: 'Nodo eliminado correctamente' });
+    } catch (err: any) {
+      logger.error(`Error eliminando nodo: ${err.message}`);
+      return res.status(500).json({ error: 'Error al eliminar nodo' });
+    }
+  }
+
+  /**
+   * Tests connection to a MikroTik Node
+   */
+  static async testConnection(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const isOnline = await MikrotikService.testConnection(id);
+      if (isOnline) {
+        return res.json({ status: 'online', message: 'Conexión con MikroTik establecida correctamente' });
+      } else {
+        return res.status(502).json({ status: 'offline', message: 'No se pudo conectar con el MikroTik. Verifique IP, puerto y credenciales.' });
+      }
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Error durante prueba de conexión' });
+    }
+  }
+
+  static async listActions(req: Request, res: Response) {
+    try {
+      const actions = await prisma.mikrotikAction.findMany({
+        orderBy: { executedAt: 'desc' },
+        include: {
+          node: { select: { name: true } },
+          contract: {
+            include: {
+              client: { select: { fullName: true } },
+            },
+          },
+        },
+      });
+
+      const mapped = actions.map(act => ({
+        id: act.id,
+        clientName: act.contract?.client?.fullName || 'Desconocido',
+        nodeName: act.node?.name || 'Desconocido',
+        actionType: act.actionType,
+        status: act.status,
+        executedAt: act.executedAt,
+        errorMessage: act.errorMessage,
+      }));
+
+      return res.json(mapped);
+    } catch (err: any) {
+      logger.error(`Error listando acciones de MikroTik: ${err.message}`);
+      return res.status(500).json({ error: 'Error al obtener historial de acciones' });
+    }
+  }
+}
