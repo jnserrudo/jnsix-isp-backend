@@ -25,8 +25,10 @@ export class MikrotikService {
     
     // In development, if host is localhost, 127.0.0.1, or typical placeholders, simulate it
     const isMock = 
-      process.env.NODE_ENV === 'development' && 
-      (host === '127.0.0.1' || host === 'localhost' || host.startsWith('192.168.'));
+      process.env.SIMULATE_MIKROTIK === 'true' ||
+      host === '127.0.0.1' || 
+      host === 'localhost' || 
+      host.startsWith('192.168.');
 
     if (isMock) {
       logger.warn(`[SIMULACIÓN] Simulando comando en MikroTik: ${command} con args: ${JSON.stringify(args)}`);
@@ -324,8 +326,10 @@ export class MikrotikService {
     };
 
     const isMock = 
-      process.env.NODE_ENV === 'development' && 
-      (node.mikrotikHost === '127.0.0.1' || node.mikrotikHost === 'localhost' || node.mikrotikHost.startsWith('192.168.'));
+      process.env.SIMULATE_MIKROTIK === 'true' ||
+      node.mikrotikHost === '127.0.0.1' || 
+      node.mikrotikHost === 'localhost' || 
+      node.mikrotikHost.startsWith('192.168.');
 
     // Plan limits
     const planLimitRx = contract.plan ? contract.plan.downloadSpeed : 50;
