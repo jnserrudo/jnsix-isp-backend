@@ -1,8 +1,5 @@
-import { PrismaClient } from '@prisma/client';
 import { AuditService } from '../services/audit.service';
 import { AuditEntity, AuditAction } from '@prisma/client';
-
-const prisma = new PrismaClient();
 
 /**
  * Utilidades para soft delete en todas las entidades

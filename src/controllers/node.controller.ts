@@ -8,6 +8,11 @@ export class NodeController {
     try {
       const nodes = await prisma.node.findMany({
         orderBy: { name: 'asc' },
+        include: {
+          _count: {
+            select: { contracts: true }
+          }
+        }
       });
       return res.json(nodes);
     } catch (err: any) {
@@ -113,9 +118,9 @@ export class NodeController {
       const { id } = req.params;
       const isOnline = await MikrotikService.testConnection(id);
       if (isOnline) {
-        return res.json({ status: 'online', message: 'Conexión con MikroTik establecida correctamente' });
+        return res.json({ success: true, status: 'online', message: 'Conexión con MikroTik establecida correctamente' });
       } else {
-        return res.status(502).json({ status: 'offline', message: 'No se pudo conectar con el MikroTik. Verifique IP, puerto y credenciales.' });
+        return res.status(502).json({ success: false, status: 'offline', message: 'No se pudo conectar con el MikroTik. Verifique IP, puerto y credenciales.' });
       }
     } catch (err: any) {
       return res.status(500).json({ error: err.message || 'Error durante prueba de conexión' });

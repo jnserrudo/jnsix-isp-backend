@@ -41,40 +41,40 @@ async function main() {
   console.log('Usuarios creados: admin@jnsix.com y operador@jnsix.com');
 
   // 2. Create Service Plans
+  const plan10 = await prisma.plan.create({
+    data: {
+      name: 'Plan Fibra 10 Mbps',
+      downloadSpeed: 10,
+      uploadSpeed: 5,
+      price: 25500.00,
+      mikrotikProfile: 'plan_10m',
+      description: 'Velocidad básica de 10 Megas para navegación y redes sociales.',
+    },
+  });
+
+  const plan20 = await prisma.plan.create({
+    data: {
+      name: 'Plan Fibra 20 Mbps',
+      downloadSpeed: 20,
+      uploadSpeed: 10,
+      price: 29500.00,
+      mikrotikProfile: 'plan_20m',
+      description: 'Velocidad intermedia de 20 Megas ideal para teletrabajo y streaming.',
+    },
+  });
+
   const plan30 = await prisma.plan.create({
     data: {
       name: 'Plan Fibra 30 Mbps',
       downloadSpeed: 30,
-      uploadSpeed: 10,
-      price: 15000.00,
+      uploadSpeed: 15,
+      price: 31500.00,
       mikrotikProfile: 'plan_30m',
-      description: 'Velocidad ideal para navegación básica, mensajería y redes sociales.',
+      description: 'Velocidad recomendada de 30 Megas para múltiples dispositivos y streaming HD.',
     },
   });
 
-  const plan50 = await prisma.plan.create({
-    data: {
-      name: 'Plan Fibra 50 Mbps',
-      downloadSpeed: 50,
-      uploadSpeed: 25,
-      price: 20000.00,
-      mikrotikProfile: 'plan_50m',
-      description: 'Streaming HD y teletrabajo sin interrupciones.',
-    },
-  });
-
-  const plan100 = await prisma.plan.create({
-    data: {
-      name: 'Plan Fibra 100 Mbps',
-      downloadSpeed: 100,
-      uploadSpeed: 50,
-      price: 30000.00,
-      mikrotikProfile: 'plan_100m',
-      description: 'Máximo rendimiento para descargas pesadas, streaming 4K y gaming.',
-    },
-  });
-
-  console.log('Planes creados: 30 Mbps, 50 Mbps, 100 Mbps.');
+  console.log('Planes creados: 10 Mbps ($25.500), 20 Mbps ($29.500), 30 Mbps ($31.500).');
 
   // 3. Create Infrastructure Nodes
   const nodeTorre = await prisma.node.create({
@@ -145,15 +145,15 @@ async function main() {
   console.log('Clientes creados: Carlos Gómez (Activo), María Rodríguez (Suspendido), Esteban Altieri (Activo)');
 
   // 5. Create Service Contracts for Clients
-  // Carlos Gómez: Plan 50 Mbps en Torre Centro, PPPoE
+  // Carlos Gómez: Plan 20 Mbps en Torre Centro, PPPoE
   const contract1 = await prisma.serviceContract.create({
     data: {
       clientId: client1.id,
-      planId: plan50.id,
+      planId: plan20.id,
       nodeId: nodeTorre.id,
       billingDay: 5,
       graceDays: 5,
-      pppoeUsername: 'carlos_gomez_50',
+      pppoeUsername: 'carlos_gomez_20',
       pppoePassword: 'passpppoe123',
       onuSerial: 'VSOL00E1D2C3',
       onuModel: 'VSOL XPON',
@@ -162,11 +162,11 @@ async function main() {
     },
   });
 
-  // María Rodríguez: Plan 30 Mbps en Torre Centro, IP Fija (Está suspendida)
+  // María Rodríguez: Plan 10 Mbps en Torre Centro, IP Fija (Está suspendida)
   const contract2 = await prisma.serviceContract.create({
     data: {
       clientId: client2.id,
-      planId: plan30.id,
+      planId: plan10.id,
       nodeId: nodeTorre.id,
       billingDay: 1, // Vence rápido
       graceDays: 3,
@@ -179,15 +179,15 @@ async function main() {
     },
   });
 
-  // Esteban Altieri: Plan 100 Mbps en Torre Centro, PPPoE
+  // Esteban Altieri: Plan 30 Mbps en Torre Centro, PPPoE
   const contract3 = await prisma.serviceContract.create({
     data: {
       clientId: client3.id,
-      planId: plan100.id,
+      planId: plan30.id,
       nodeId: nodeTorre.id,
       billingDay: 10,
       graceDays: 5,
-      pppoeUsername: 'esteban_altieri_100',
+      pppoeUsername: 'esteban_altieri_30',
       pppoePassword: 'passpppoe456',
       onuSerial: 'VSOL00F9F8F7',
       onuModel: 'VSOL XPON',
@@ -211,7 +211,7 @@ async function main() {
       invoiceNumber: `FAC-${currentYear}${(currentMonth + 1).toString().padStart(2, '0')}-CG01`,
       periodStart: new Date(currentYear, currentMonth, 1),
       periodEnd: new Date(currentYear, currentMonth + 1, 0),
-      amount: plan50.price,
+      amount: plan20.price,
       status: 'PAID',
       dueDate: new Date(currentYear, currentMonth, 15),
       issuedAt: new Date(currentYear, currentMonth, 5),
@@ -225,7 +225,7 @@ async function main() {
     data: {
       invoiceId: invoice1.id,
       clientId: client1.id,
-      amount: plan50.price,
+      amount: plan20.price,
       paymentMethod: 'TRANSFER',
       paymentDate: new Date(currentYear, currentMonth, 10),
       reference: 'TRANSF-CBU-9823412',
@@ -243,7 +243,7 @@ async function main() {
       invoiceNumber: `FAC-${currentYear}${(currentMonth + 1).toString().padStart(2, '0')}-MR02`,
       periodStart: new Date(currentYear, currentMonth, 1),
       periodEnd: new Date(currentYear, currentMonth + 1, 0),
-      amount: plan30.price,
+      amount: plan10.price,
       status: 'OVERDUE',
       dueDate: new Date(currentYear, currentMonth, 4),
       issuedAt: new Date(currentYear, currentMonth, 1),
@@ -259,7 +259,7 @@ async function main() {
       invoiceNumber: `FAC-${currentYear}${(currentMonth + 1).toString().padStart(2, '0')}-EA03`,
       periodStart: new Date(currentYear, currentMonth, 1),
       periodEnd: new Date(currentYear, currentMonth + 1, 0),
-      amount: plan100.price,
+      amount: plan30.price,
       status: 'PENDING',
       dueDate: new Date(currentYear, currentMonth, 20),
       issuedAt: new Date(currentYear, currentMonth, 10),

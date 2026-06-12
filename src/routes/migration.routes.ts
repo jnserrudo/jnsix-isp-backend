@@ -19,4 +19,11 @@ router.post(
   MigrationController.execute
 );
 
+router.post(
+  '/cleanup-node',
+  authenticateJWT,
+  requireRole([UserRole.ADMIN]),
+  MigrationController.cleanupNode
+);
+
 export default router;

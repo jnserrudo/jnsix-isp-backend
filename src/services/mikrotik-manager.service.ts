@@ -1,6 +1,27 @@
-import { RouterOSAPI } from 'node-routeros';
+import { RouterOSAPI, Channel, Receiver } from 'node-routeros';
 import logger from '../utils/logger';
 import prisma from './db.service';
+
+// Monkey patch node-routeros Channel class to prevent uncaught exceptions crashing the server
+if (Channel && Channel.prototype) {
+  (Channel.prototype as any)['onUnknown'] = function (reply: string) {
+    logger.error(`[RouterOS Manager API Channel Warning] Unknown reply received: ${reply}`);
+    this.emit('trap', new Error(`Tried to process unknown reply: ${reply}`));
+  };
+}
+
+// Monkey patch node-routeros Receiver class to prevent uncaught exceptions on unregistered tags
+if (Receiver && Receiver.prototype) {
+  (Receiver.prototype as any)['sendTagData'] = function (currentTag: string) {
+    const tag = this.tags.get(currentTag);
+    if (tag) {
+      tag.callback(this.currentPacket);
+    } else {
+      logger.warn(`[RouterOS Manager API Receiver Warning] Received data on unregistered tag: ${currentTag}`);
+    }
+    this.cleanUp();
+  };
+}
 
 interface MikrotikCredentials {
   host: string;
@@ -95,9 +116,14 @@ export class MikrotikManagerService {
       timeout: 12,
     });
 
+    // Registrar manejador de eventos de error para evitar que excepciones no controladas caigan en Node.js
+    conn.on('error', (err: any) => {
+      logger.error(`[RouterOS Manager API Event Error] en ${credentials.host}: ${err.message || err}`);
+    });
+
     try {
       await conn.connect();
-      const rawResult = await conn.write(command, args);
+      const rawResult = args ? await conn.write(command, args) : await conn.write(command);
       await conn.close();
 
       return {
@@ -253,22 +279,33 @@ export class MikrotikManagerService {
       'Listando interfaces de red'
     );
 
+    const interfaces = interfacesResult.result || [];
+    const hasWireless = Array.isArray(interfaces) && interfaces.some((iface: any) => 
+      iface.type === 'wlan' || 
+      iface.type === 'wireless' || 
+      iface.type === 'w60g'
+    );
+
     let wirelessResult: any = [];
-    try {
-      // Fetch wireless interfaces, catch error in case the router has no wireless cards
-      const res = await this.runCommand(
-        nodeId,
-        '/interface/wireless/print',
-        undefined,
-        'Consultando interfaces inalámbricas wlan'
-      );
-      wirelessResult = res.result || [];
-    } catch (e) {
-      logger.warn(`No se pudieron listar interfaces inalámbricas wlan en el nodo ${nodeId}: ${e}`);
+    if (hasWireless) {
+      try {
+        // Fetch wireless interfaces, catch error in case the router has no wireless cards
+        const res = await this.runCommand(
+          nodeId,
+          '/interface/wireless/print',
+          undefined,
+          'Consultando interfaces inalámbricas wlan'
+        );
+        wirelessResult = res.result || [];
+      } catch (e) {
+        logger.warn(`No se pudieron listar interfaces inalámbricas wlan en el nodo ${nodeId}: ${e}`);
+      }
+    } else {
+      logger.info(`[Manager] El router del nodo ${nodeId} no posee interfaces wireless. Omitiendo.`);
     }
 
     return {
-      interfaces: interfacesResult.result || [],
+      interfaces,
       wireless: Array.isArray(wirelessResult) ? wirelessResult : [],
     };
   }
@@ -351,9 +388,18 @@ export class MikrotikManagerService {
     leases: any[];
     arp: any[];
   }> {
-    const addresses = await this.runCommand(nodeId, '/ip/address/print', undefined, 'Obteniendo asignaciones de direcciones IP');
-    const leases = await this.runCommand(nodeId, '/ip/dhcp-server/lease/print', undefined, 'Listando alquileres de IP (DHCP Leases)');
-    const arp = await this.runCommand(nodeId, '/ip/arp/print', undefined, 'Obteniendo tabla de traducción ARP');
+    const addresses = await this.runCommand(nodeId, '/ip/address/print', undefined, 'Obteniendo asignaciones de direcciones IP').catch((err) => {
+      logger.warn(`No se pudieron obtener asignaciones de direcciones IP del nodo ${nodeId}: ${err.message || err}`);
+      return { result: [] };
+    });
+    const leases = await this.runCommand(nodeId, '/ip/dhcp-server/lease/print', undefined, 'Listando alquileres de IP (DHCP Leases)').catch((err) => {
+      logger.warn(`No se pudieron obtener DHCP Leases del nodo ${nodeId}: ${err.message || err}`);
+      return { result: [] };
+    });
+    const arp = await this.runCommand(nodeId, '/ip/arp/print', undefined, 'Obteniendo tabla de traducción ARP').catch((err) => {
+      logger.warn(`No se pudo obtener tabla ARP del nodo ${nodeId}: ${err.message || err}`);
+      return { result: [] };
+    });
 
     return {
       addresses: addresses.result || [],
@@ -367,9 +413,18 @@ export class MikrotikManagerService {
     active: any[];
     profiles: any[];
   }> {
-    const secrets = await this.runCommand(nodeId, '/ppp/secret/print', undefined, 'Listando secretos PPPoE');
-    const active = await this.runCommand(nodeId, '/ppp/active/print', undefined, 'Listando sesiones PPPoE activas');
-    const profiles = await this.runCommand(nodeId, '/ppp/profile/print', undefined, 'Obteniendo perfiles de servicio PPPoE');
+    const secrets = await this.runCommand(nodeId, '/ppp/secret/print', undefined, 'Listando secretos PPPoE').catch((err) => {
+      logger.warn(`No se pudieron extraer secretos PPPoE del nodo ${nodeId}: ${err.message || err}`);
+      return { result: [] };
+    });
+    const active = await this.runCommand(nodeId, '/ppp/active/print', undefined, 'Listando sesiones PPPoE activas').catch((err) => {
+      logger.warn(`No se pudieron extraer sesiones PPPoE activas del nodo ${nodeId}: ${err.message || err}`);
+      return { result: [] };
+    });
+    const profiles = await this.runCommand(nodeId, '/ppp/profile/print', undefined, 'Obteniendo perfiles de servicio PPPoE').catch((err) => {
+      logger.warn(`No se pudieron obtener perfiles PPPoE del nodo ${nodeId}: ${err.message || err}`);
+      return { result: [] };
+    });
 
     return {
       secrets: secrets.result || [],

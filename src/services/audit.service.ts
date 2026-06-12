@@ -1,6 +1,5 @@
-import { PrismaClient, AuditEntity, AuditAction, Prisma } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { AuditEntity, AuditAction, Prisma } from '@prisma/client';
+import prisma from './db.service';
 
 interface LogActionParams {
   entity: AuditEntity;

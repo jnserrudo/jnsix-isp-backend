@@ -63,4 +63,38 @@ export class MigrationController {
       });
     }
   }
+
+  /**
+   * POST /api/migration/cleanup-node
+   */
+  public static async cleanupNode(req: AuthenticatedRequest, res: Response) {
+    const { nodeId } = req.body;
+    const userId = req.user?.id;
+
+    if (!nodeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Falta parámetro requerido: nodeId.'
+      });
+    }
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Usuario no autenticado.'
+      });
+    }
+
+    try {
+      const result = await MigrationService.cleanupNodeMigration(nodeId, userId);
+      return res.json(result);
+    } catch (err: any) {
+      logger.error(`Error limpiando migración del nodo ${nodeId}: ${err.message || err}`);
+      return res.status(500).json({
+        success: false,
+        message: 'Error al limpiar los datos de migración del nodo en la base de datos.',
+        errorDetails: err.message || String(err)
+      });
+    }
+  }
 }

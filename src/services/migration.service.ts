@@ -33,6 +33,7 @@ interface MigrationMappingInput {
   onuModel?: string;
   status: 'ACTIVE' | 'DELINQUENT';
   monto?: number;
+  suggestedMatch?: any;
 }
 
 export class MigrationService {
@@ -171,7 +172,7 @@ export class MigrationService {
 
       // Determine the overall best match
       let suggestedMatch: any = null;
-      if (pppConfidence >= dhcpConfidence && pppConfidence > 0.45) {
+      if (pppConfidence >= dhcpConfidence && pppConfidence > 0.65) {
         suggestedMatch = {
           type: 'PPPoE',
           name: bestPppMatch.name,
@@ -179,7 +180,7 @@ export class MigrationService {
           confidence: Math.round(pppConfidence * 100),
           details: bestPppMatch
         };
-      } else if (dhcpConfidence > pppConfidence && dhcpConfidence > 0.45) {
+      } else if (dhcpConfidence > pppConfidence && dhcpConfidence > 0.65) {
         suggestedMatch = {
           type: 'StaticIP',
           name: bestDhcpMatch.address,
@@ -257,6 +258,22 @@ export class MigrationService {
           });
 
           if (!client) {
+            let notesText = 'Importado automáticamente mediante Asistente de Migración.';
+            if (item.suggestedMatch) {
+              notesText = `[MIGRATION_METADATA]${JSON.stringify({
+                matched: true,
+                type: item.suggestedMatch.type,
+                name: item.suggestedMatch.name,
+                comment: item.suggestedMatch.comment,
+                confidence: item.suggestedMatch.confidence
+              })}[MIGRATION_METADATA]${notesText}`;
+            } else {
+              notesText = `[MIGRATION_METADATA]${JSON.stringify({
+                matched: false,
+                confidence: 0
+              })}[MIGRATION_METADATA]${notesText}`;
+            }
+
             // Create Client
             client = await tx.client.create({
               data: {
@@ -265,7 +282,7 @@ export class MigrationService {
                 phone1: item.phone || null,
                 address: item.address,
                 status: item.status === 'DELINQUENT' ? 'DELINQUENT' : 'ACTIVE',
-                notes: 'Importado automáticamente mediante Asistente de Migración.'
+                notes: notesText
               }
             });
           }
@@ -278,7 +295,7 @@ export class MigrationService {
               nodeId: nodeId,
               billingDay: 5,
               graceDays: 5,
-              status: item.status === 'DELINQUENT' ? 'SUSPENDED' : 'ACTIVE',
+              status: 'ACTIVE', // All contracts start as ACTIVE. Overdue invoices will flag them for manual suspension if needed.
               pppoeUsername: item.connectionMode === 'PPPoE' ? item.pppoeUsername || null : null,
               pppoePassword: item.connectionMode === 'PPPoE' ? item.pppoePassword || null : null,
               staticIp: item.connectionMode === 'StaticIP' ? item.staticIp || null : null,
@@ -341,6 +358,53 @@ export class MigrationService {
       importedCount,
       errorCount,
       errors
+    };
+  }
+
+  /**
+   * Cleans up (deletes) all migrated clients and their contracts/invoices/payments for a given nodeId.
+   */
+  public static async cleanupNodeMigration(nodeId: string, userId: string): Promise<any> {
+    // 1. Find all contracts linked to the node
+    const contracts = await prisma.serviceContract.findMany({
+      where: { nodeId },
+      select: { clientId: true }
+    });
+
+    const clientIds = [...new Set(contracts.map(c => c.clientId))];
+
+    if (clientIds.length === 0) {
+      return {
+        success: true,
+        deletedCount: 0,
+        message: 'No se encontraron clientes asociados a este nodo.'
+      };
+    }
+
+    // 2. Delete the clients (cascade delete handles serviceContract, invoice, payment, mikrotikAction)
+    const deleted = await prisma.client.deleteMany({
+      where: { id: { in: clientIds } }
+    });
+
+    // 3. Write audit log
+    try {
+      await prisma.auditLog.create({
+        data: {
+          entity: 'IMPORT',
+          action: 'DELETE',
+          description: `Limpieza de migración completada. Clientes eliminados: ${deleted.count}. Nodo: ${nodeId}`,
+          userId,
+          success: true
+        }
+      });
+    } catch (e) {
+      logger.error('Error escribiendo log de auditoría de limpieza:', e);
+    }
+
+    return {
+      success: true,
+      deletedCount: deleted.count,
+      message: `Se eliminaron correctamente ${deleted.count} clientes y toda su información relacionada.`
     };
   }
 }

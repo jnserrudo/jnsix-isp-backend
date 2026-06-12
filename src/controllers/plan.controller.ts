@@ -1,11 +1,18 @@
 import { Request, Response } from 'express';
 import prisma from '../services/db.service';
 import logger from '../utils/logger';
+import { AuditService } from '../services/audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 export class PlanController {
   static async list(req: Request, res: Response) {
     try {
       const plans = await prisma.plan.findMany({
+        include: {
+          _count: {
+            select: { contracts: true }
+          }
+        },
         orderBy: { name: 'asc' },
       });
       return res.json(plans);
@@ -44,6 +51,19 @@ export class PlanController {
           description,
         },
       });
+
+      // Registrar auditoría
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.PLAN,
+        entityId: plan.id,
+        action: AuditAction.CREATE,
+        description: `Plan de Internet creado: ${plan.name} (${plan.downloadSpeed}M/${plan.uploadSpeed}M) a $${plan.price}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        dataAfter: plan,
+      });
+
       return res.status(201).json(plan);
     } catch (err: any) {
       logger.error(`Error creando plan: ${err.message}`);
@@ -71,6 +91,28 @@ export class PlanController {
           isActive,
         },
       });
+
+      // Registrar auditoría
+      const user = (req as any).user;
+      const oldPrice = Number(plan.price);
+      const newPrice = Number(updated.price);
+      
+      let auditMsg = `Plan de Internet actualizado: ${updated.name}.`;
+      if (oldPrice !== newPrice) {
+        auditMsg += ` Precio cambiado de $${oldPrice} a $${newPrice}.`;
+      }
+
+      await AuditService.logAction({
+        entity: AuditEntity.PLAN,
+        entityId: updated.id,
+        action: AuditAction.UPDATE,
+        description: auditMsg,
+        userId: user?.id,
+        userEmail: user?.email,
+        dataBefore: plan,
+        dataAfter: updated,
+      });
+
       return res.json(updated);
     } catch (err: any) {
       logger.error(`Error actualizando plan: ${err.message}`);
@@ -88,7 +130,24 @@ export class PlanController {
         return res.status(400).json({ error: 'No se puede eliminar el plan porque está asociado a contratos de clientes activos' });
       }
 
+      const plan = await prisma.plan.findUnique({ where: { id } });
+
       await prisma.plan.delete({ where: { id } });
+
+      // Registrar auditoría
+      if (plan) {
+        const user = (req as any).user;
+        await AuditService.logAction({
+          entity: AuditEntity.PLAN,
+          entityId: id,
+          action: AuditAction.DELETE,
+          description: `Plan de Internet eliminado: ${plan.name}`,
+          userId: user?.id,
+          userEmail: user?.email,
+          dataBefore: plan,
+        });
+      }
+
       return res.json({ message: 'Plan eliminado correctamente' });
     } catch (err: any) {
       logger.error(`Error eliminando plan: ${err.message}`);

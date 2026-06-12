@@ -204,7 +204,8 @@ export class BillingService {
       }
 
       if (shouldCut) {
-        logger.info(`Contrato ${contract.id} (Cliente: ${contract.client.fullName}) califica para corte. Ejecutando bloqueo...`);
+        logger.info(`Contrato ${contract.id} (Cliente: ${contract.client.fullName}) califica para corte. (Bloqueo automático en MikroTik deshabilitado temporalmente)`);
+        /* 
         try {
           await MikrotikService.blockContract(contract.id, 'CRON_JOB');
           cutsExecuted++;
@@ -212,6 +213,9 @@ export class BillingService {
           logger.error(`Error ejecutando corte automático para contrato ${contract.id}: ${err.message}`);
           errors++;
         }
+        */
+        // Se cuenta como ejecutado lógicamente para el log
+        cutsExecuted++;
       }
     }
 

@@ -18,6 +18,7 @@ export class SchedulerService {
     });
 
     // 2. Daily at 09:00 AM: Process automatic cuts for unpaid expired invoices
+    /*
     cron.schedule('0 9 * * *', async () => {
       logger.info('Iniciando tarea programada: Motor de Cortes Automáticos...');
       try {
@@ -26,7 +27,8 @@ export class SchedulerService {
         logger.error(`Error en tarea de corte automático: ${err.message}`);
       }
     });
+    */
 
-    logger.info('Tareas programadas registradas: Facturación (00:05) y Cortes (09:00).');
+    logger.info('Tareas programadas registradas: Facturación (00:05). Motor de Cortes deshabilitado por el momento.');
   }
 }

@@ -5,29 +5,71 @@ import logger from '../utils/logger';
 export class DashboardController {
   static async getStats(req: Request, res: Response) {
     try {
+      const { nodeId } = req.query;
       const now = new Date();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
 
-      // Clients counts
-      const totalClients = await prisma.client.count();
-      const activeClients = await prisma.client.count({ where: { status: 'ACTIVE' } });
-      const suspendedClients = await prisma.client.count({ where: { status: 'SUSPENDED' } });
-      const delinquentClients = await prisma.client.count({ where: { status: 'DELINQUENT' } });
+      const clientWhere: any = {};
+      const invoiceWhere: any = {};
+      const actionWhere: any = {};
 
-      // Invoicing statistics this month
+      if (nodeId && typeof nodeId === 'string' && nodeId !== '') {
+        clientWhere.contracts = { some: { nodeId } };
+        invoiceWhere.contract = { nodeId };
+        actionWhere.nodeId = nodeId;
+      }
+
+      // Run queries sequentially to respect Clever Cloud's low connection limit
+      const clientStatusCounts = await prisma.client.groupBy({
+        by: ['status'],
+        where: clientWhere,
+        _count: { id: true }
+      });
+
       const invoicesThisMonth = await prisma.invoice.findMany({
         where: {
-          issuedAt: {
-            gte: startOfMonth,
-            lte: endOfMonth,
+          ...invoiceWhere,
+          issuedAt: { gte: startOfMonth, lte: endOfMonth },
+        },
+        select: { amount: true, status: true },
+      });
+
+      const totalOverdueInvoices = await prisma.invoice.aggregate({
+        where: { ...invoiceWhere, status: 'OVERDUE' },
+        _count: true,
+        _sum: { amount: true },
+      });
+
+      const recentActions = await prisma.mikrotikAction.findMany({
+        where: actionWhere,
+        take: 15,
+        orderBy: { executedAt: 'desc' },
+        include: {
+          node: { select: { name: true } },
+          contract: {
+            include: {
+              client: { select: { fullName: true } },
+            },
           },
         },
-        select: {
-          amount: true,
-          status: true,
-        },
       });
+
+      const nodesCount = await prisma.node.count();
+
+      // Calculate totals from clientStatusCounts
+      let totalClients = 0;
+      let activeClients = 0;
+      let suspendedClients = 0;
+      let delinquentClients = 0;
+
+      for (const group of clientStatusCounts) {
+        const count = group._count.id;
+        totalClients += count;
+        if (group.status === 'ACTIVE') activeClients = count;
+        if (group.status === 'SUSPENDED') suspendedClients = count;
+        if (group.status === 'DELINQUENT') delinquentClients = count;
+      }
 
       let totalInvoiced = 0;
       let totalCollected = 0;
@@ -42,32 +84,6 @@ export class DashboardController {
           totalPending += amount;
         }
       }
-
-      // Overdue stats total (all time)
-      const totalOverdueInvoices = await prisma.invoice.aggregate({
-        where: { status: 'OVERDUE' },
-        _count: true,
-        _sum: {
-          amount: true,
-        },
-      });
-
-      // Recent MikroTik Actions
-      const recentActions = await prisma.mikrotikAction.findMany({
-        take: 15,
-        orderBy: { executedAt: 'desc' },
-        include: {
-          node: { select: { name: true } },
-          contract: {
-            include: {
-              client: { select: { fullName: true } },
-            },
-          },
-        },
-      });
-
-      // Active nodes list
-      const nodesCount = await prisma.node.count();
 
       return res.json({
         clients: {
@@ -98,7 +114,13 @@ export class DashboardController {
       });
     } catch (err: any) {
       logger.error(`Error calculando estadísticas del dashboard: ${err.message}`);
-      return res.status(500).json({ error: 'Error interno del servidor al calcular estadísticas' });
+      const errMsg = err.message || '';
+      const isConnectionError = errMsg.includes('connections') || errMsg.includes('connection') || errMsg.includes('pool') || errMsg.includes('FATAL');
+      return res.status(500).json({ 
+        error: isConnectionError 
+          ? 'Too many database connections' 
+          : 'Error interno del servidor al calcular estadísticas' 
+      });
     }
   }
 

@@ -1,6 +1,27 @@
-import { RouterOSAPI } from 'node-routeros';
+import { RouterOSAPI, Channel, Receiver } from 'node-routeros';
 import logger from '../utils/logger';
 import prisma from './db.service';
+
+// Monkey patch node-routeros Channel class to prevent uncaught exceptions crashing the server
+if (Channel && Channel.prototype) {
+  (Channel.prototype as any)['onUnknown'] = function (reply: string) {
+    logger.error(`[RouterOS API Channel Warning] Unknown reply received: ${reply}`);
+    this.emit('trap', new Error(`Tried to process unknown reply: ${reply}`));
+  };
+}
+
+// Monkey patch node-routeros Receiver class to prevent uncaught exceptions on unregistered tags
+if (Receiver && Receiver.prototype) {
+  (Receiver.prototype as any)['sendTagData'] = function (currentTag: string) {
+    const tag = this.tags.get(currentTag);
+    if (tag) {
+      tag.callback(this.currentPacket);
+    } else {
+      logger.warn(`[RouterOS API Receiver Warning] Received data on unregistered tag: ${currentTag}`);
+    }
+    this.cleanUp();
+  };
+}
 
 interface MikrotikCredentials {
   host: string;
@@ -43,16 +64,20 @@ export class MikrotikService {
       timeout: 10, // 10 seconds timeout
     });
 
+    // Registrar manejador de eventos de error para evitar que excepciones no controladas caigan en Node.js
+    conn.on('error', (err: any) => {
+      logger.error(`[RouterOS API Event Error] en ${host}: ${err.message || err}`);
+    });
+
     try {
       await conn.connect();
       logger.info(`Conexión exitosa con MikroTik ${host}`);
       
       let result;
-      if (command.startsWith('/')) {
-        // Run the menu command
+      if (args) {
         result = await conn.write(command, args);
       } else {
-        result = await conn.write(command, args);
+        result = await conn.write(command);
       }
       
       await conn.close();
@@ -657,26 +682,45 @@ export class MikrotikService {
     logger.info(`[Radar] Escaneando dispositivos en nodo ${node.name} (${node.mikrotikHost})`);
 
     try {
-      // Ejecutar consultas concurrentes para máxima velocidad
-      const [arpTable, dhcpLeases, pppoeActive, wirelessClients] = await Promise.allSettled([
-        // 1. Tabla ARP - La fuente de verdad para conexiones físicas
-        this.executeCommand(credentials, '/ip/arp/print'),
-        
-        // 2. DHCP Leases - Para obtener hostnames
-        this.executeCommand(credentials, '/ip/dhcp-server/lease/print'),
-        
-        // 3. PPPoE Activos - Para clientes ISP
-        this.executeCommand(credentials, '/ppp/active/print'),
-        
-        // 4. Wireless Registration - Para señal Wi-Fi (puede fallar si no hay interfaz wireless)
-        this.executeCommand(credentials, '/interface/wireless/registration-table/print').catch(() => [])
-      ]);
+      // Ejecutar consultas secuencialmente para evitar saturar el router y prevenir colisiones/RosException
+      const interfaces = await this.executeCommand(credentials, '/interface/print').catch((err) => {
+        logger.error(`Error en /interface/print: ${err.message || err}`);
+        return [];
+      });
+      const arp = await this.executeCommand(credentials, '/ip/arp/print').catch((err) => {
+        logger.error(`Error en /ip/arp/print: ${err.message || err}`);
+        return [];
+      });
+      const dhcp = await this.executeCommand(credentials, '/ip/dhcp-server/lease/print').catch((err) => {
+        logger.error(`Error en /ip/dhcp-server/lease/print: ${err.message || err}`);
+        return [];
+      });
+      const pppoe = await this.executeCommand(credentials, '/ppp/active/print').catch((err) => {
+        logger.error(`Error en /ppp/active/print: ${err.message || err}`);
+        return [];
+      });
 
-      // Extraer datos o arrays vacíos si falló
-      const arp = arpTable.status === 'fulfilled' ? arpTable.value : [];
-      const dhcp = dhcpLeases.status === 'fulfilled' ? dhcpLeases.value : [];
-      const pppoe = pppoeActive.status === 'fulfilled' ? pppoeActive.value : [];
-      const wireless = wirelessClients.status === 'fulfilled' ? wirelessClients.value : [];
+      // Determinar si el router tiene interfaces inalámbricas antes de hacer consultas de wireless
+      const hasWireless = Array.isArray(interfaces) && interfaces.some((iface: any) => 
+        iface.type === 'wlan' || 
+        iface.type === 'wireless' || 
+        iface.type === 'w60g'
+      );
+
+      let wireless: any[] = [];
+      if (hasWireless) {
+        try {
+          logger.info(`[Radar] Interfaces wireless detectadas. Consultando tabla de registros...`);
+          const wirelessRes = await this.executeCommand(credentials, '/interface/wireless/registration-table/print');
+          if (Array.isArray(wirelessRes)) {
+            wireless = wirelessRes;
+          }
+        } catch (wirelessErr: any) {
+          logger.warn(`No se pudo obtener tabla de registro wireless: ${wirelessErr.message}`);
+        }
+      } else {
+        logger.info(`[Radar] El router no posee interfaces wireless activas/compatibles. Omitiendo escaneo inalámbrico.`);
+      }
 
       logger.info(`[Radar] Datos obtenidos - ARP: ${arp.length}, DHCP: ${dhcp.length}, PPPoE: ${pppoe.length}, Wireless: ${wireless.length}`);
 
@@ -701,6 +745,30 @@ export class MikrotikService {
         if (client['mac-address']) wirelessMap.set(client['mac-address'], client);
       });
 
+      // 1. Obtener contratos cargados en base de datos para este nodo
+      const dbContracts = await prisma.serviceContract.findMany({
+        where: { nodeId, deletedAt: null },
+        include: { client: { select: { id: true, fullName: true } } }
+      });
+
+      // Indexación para búsqueda rápida
+      const contractByPppoe = new Map();
+      const contractByIp = new Map();
+      const contractByMac = new Map();
+
+      dbContracts.forEach(contract => {
+        if (contract.pppoeUsername) {
+          contractByPppoe.set(contract.pppoeUsername.toLowerCase().trim(), contract);
+        }
+        if (contract.staticIp) {
+          contractByIp.set(contract.staticIp.trim(), contract);
+        }
+        if (contract.macAddress) {
+          const normMac = contract.macAddress.toUpperCase().replace(/[:-]/g, '');
+          contractByMac.set(normMac, contract);
+        }
+      });
+
       // Normalizar y fusionar datos
       const connections = arp
         .filter((entry: any) => entry.address && entry['mac-address']) // Solo entradas válidas
@@ -711,6 +779,28 @@ export class MikrotikService {
 
           // Buscar en PPPoE primero (prioridad para clientes ISP)
           const pppoeSession = pppoeMap.get(ip);
+          const dhcpLease = dhcpMap.get(ip) || dhcpMap.get(mac);
+
+          // Buscar coincidencia en base de datos para etiquetar huérfanos
+          const normMac = mac ? mac.toUpperCase().replace(/[:-]/g, '') : '';
+          let match: any = null;
+
+          if (pppoeSession) {
+            const pppoeUser = (pppoeSession.name || '').toLowerCase().trim();
+            match = contractByPppoe.get(pppoeUser);
+          } else if (dhcpLease) {
+            match = contractByMac.get(normMac) || contractByIp.get(ip);
+          } else {
+            match = contractByIp.get(ip);
+          }
+
+          const association = {
+            isAssociated: !!match,
+            clientId: match ? match.clientId : null,
+            clientName: match ? match.client.fullName : null,
+            contractId: match ? match.id : null,
+          };
+
           if (pppoeSession) {
             const wirelessInfo = wirelessMap.get(mac);
             return {
@@ -723,11 +813,11 @@ export class MikrotikService {
               signal: wirelessInfo?.['signal-strength'] || null,
               rx: pppoeSession['bytes-in'] || null,
               tx: pppoeSession['bytes-out'] || null,
+              ...association
             };
           }
 
           // Buscar en DHCP
-          const dhcpLease = dhcpMap.get(ip) || dhcpMap.get(mac);
           if (dhcpLease) {
             const wirelessInfo = wirelessMap.get(mac);
             const hostname = dhcpLease['host-name'] || dhcpLease['active-host-name'] || 'Unknown Device';
@@ -741,6 +831,7 @@ export class MikrotikService {
               signal: wirelessInfo?.['signal-strength'] || null,
               rx: null,
               tx: null,
+              ...association
             };
           }
 
@@ -756,6 +847,7 @@ export class MikrotikService {
             signal: wirelessInfo?.['signal-strength'] || null,
             rx: null,
             tx: null,
+            ...association
           };
         });
 
