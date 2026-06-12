@@ -636,4 +636,142 @@ export class MikrotikService {
       throw new Error(`Error de diagnóstico en MikroTik: ${err.message}`);
     }
   }
+
+  /**
+   * Radar de Dispositivos: Obtiene todas las conexiones activas de forma dinámica
+   * Fusiona datos de ARP, DHCP, PPPoE y Wireless para crear un mapa completo de la red
+   */
+  static async getLiveConnections(nodeId: string): Promise<any> {
+    const node = await prisma.node.findUnique({ where: { id: nodeId } });
+    if (!node) {
+      throw new Error('Nodo no encontrado');
+    }
+
+    const credentials: MikrotikCredentials = {
+      host: node.mikrotikHost,
+      port: node.mikrotikPort,
+      user: node.mikrotikUser,
+      pass: node.mikrotikPassword,
+    };
+
+    logger.info(`[Radar] Escaneando dispositivos en nodo ${node.name} (${node.mikrotikHost})`);
+
+    try {
+      // Ejecutar consultas concurrentes para máxima velocidad
+      const [arpTable, dhcpLeases, pppoeActive, wirelessClients] = await Promise.allSettled([
+        // 1. Tabla ARP - La fuente de verdad para conexiones físicas
+        this.executeCommand(credentials, '/ip/arp/print'),
+        
+        // 2. DHCP Leases - Para obtener hostnames
+        this.executeCommand(credentials, '/ip/dhcp-server/lease/print'),
+        
+        // 3. PPPoE Activos - Para clientes ISP
+        this.executeCommand(credentials, '/ppp/active/print'),
+        
+        // 4. Wireless Registration - Para señal Wi-Fi (puede fallar si no hay interfaz wireless)
+        this.executeCommand(credentials, '/interface/wireless/registration-table/print').catch(() => [])
+      ]);
+
+      // Extraer datos o arrays vacíos si falló
+      const arp = arpTable.status === 'fulfilled' ? arpTable.value : [];
+      const dhcp = dhcpLeases.status === 'fulfilled' ? dhcpLeases.value : [];
+      const pppoe = pppoeActive.status === 'fulfilled' ? pppoeActive.value : [];
+      const wireless = wirelessClients.status === 'fulfilled' ? wirelessClients.value : [];
+
+      logger.info(`[Radar] Datos obtenidos - ARP: ${arp.length}, DHCP: ${dhcp.length}, PPPoE: ${pppoe.length}, Wireless: ${wireless.length}`);
+
+      // Crear mapas para búsqueda rápida
+      const dhcpMap = new Map();
+      const pppoeMap = new Map();
+      const wirelessMap = new Map();
+
+      // Indexar DHCP por IP y MAC
+      dhcp.forEach((lease: any) => {
+        if (lease.address) dhcpMap.set(lease.address, lease);
+        if (lease['mac-address']) dhcpMap.set(lease['mac-address'], lease);
+      });
+
+      // Indexar PPPoE por IP
+      pppoe.forEach((session: any) => {
+        if (session.address) pppoeMap.set(session.address, session);
+      });
+
+      // Indexar Wireless por MAC
+      wireless.forEach((client: any) => {
+        if (client['mac-address']) wirelessMap.set(client['mac-address'], client);
+      });
+
+      // Normalizar y fusionar datos
+      const connections = arp
+        .filter((entry: any) => entry.address && entry['mac-address']) // Solo entradas válidas
+        .map((entry: any) => {
+          const ip = entry.address;
+          const mac = entry['mac-address'];
+          const iface = entry.interface || '-';
+
+          // Buscar en PPPoE primero (prioridad para clientes ISP)
+          const pppoeSession = pppoeMap.get(ip);
+          if (pppoeSession) {
+            const wirelessInfo = wirelessMap.get(mac);
+            return {
+              type: 'PPPoE',
+              deviceName: pppoeSession.name || 'Unknown PPPoE User',
+              ip,
+              mac,
+              interface: iface,
+              uptime: pppoeSession.uptime || '-',
+              signal: wirelessInfo?.['signal-strength'] || null,
+              rx: pppoeSession['bytes-in'] || null,
+              tx: pppoeSession['bytes-out'] || null,
+            };
+          }
+
+          // Buscar en DHCP
+          const dhcpLease = dhcpMap.get(ip) || dhcpMap.get(mac);
+          if (dhcpLease) {
+            const wirelessInfo = wirelessMap.get(mac);
+            const hostname = dhcpLease['host-name'] || dhcpLease['active-host-name'] || 'Unknown Device';
+            return {
+              type: 'DHCP',
+              deviceName: hostname,
+              ip,
+              mac,
+              interface: iface,
+              uptime: '-',
+              signal: wirelessInfo?.['signal-strength'] || null,
+              rx: null,
+              tx: null,
+            };
+          }
+
+          // Si no está en DHCP ni PPPoE, es IP Estática
+          const wirelessInfo = wirelessMap.get(mac);
+          return {
+            type: 'Static IP',
+            deviceName: 'Static Device',
+            ip,
+            mac,
+            interface: iface,
+            uptime: '-',
+            signal: wirelessInfo?.['signal-strength'] || null,
+            rx: null,
+            tx: null,
+          };
+        });
+
+      logger.info(`[Radar] ${connections.length} dispositivos detectados y normalizados`);
+
+      return {
+        success: true,
+        nodeId,
+        nodeName: node.name,
+        totalDevices: connections.length,
+        connections,
+        scannedAt: new Date().toISOString(),
+      };
+    } catch (err: any) {
+      logger.error(`[Radar] Error al escanear nodo ${nodeId}: ${err.message}`);
+      throw new Error(`Error al escanear dispositivos: ${err.message}`);
+    }
+  }
 }

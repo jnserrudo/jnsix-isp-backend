@@ -16,4 +16,7 @@ router.delete('/:id', requireRole(['ADMIN']), NodeController.delete);
 // Test MikroTik routerOS API connection
 router.post('/:id/test-connection', requireRole(['ADMIN', 'OPERATOR']), NodeController.testConnection);
 
+// Radar de Dispositivos - Obtener conexiones activas
+router.get('/:id/live-connections', requireRole(['ADMIN', 'OPERATOR']), NodeController.getLiveConnections);
+
 export default router;

@@ -152,4 +152,51 @@ export class NodeController {
       return res.status(500).json({ error: 'Error al obtener historial de acciones' });
     }
   }
+
+  /**
+   * Radar de Dispositivos: Obtiene todas las conexiones activas en un nodo
+   */
+  static async getLiveConnections(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      
+      logger.info(`[API] Solicitando escaneo de dispositivos en nodo ${id}`);
+      
+      const result = await MikrotikService.getLiveConnections(id);
+      return res.json(result);
+    } catch (err: any) {
+      logger.error(`[API] Error en getLiveConnections: ${err.message}`);
+      
+      // Manejo de errores específicos
+      if (err.message.includes('Nodo no encontrado')) {
+        return res.status(404).json({ error: 'Nodo no encontrado' });
+      }
+      
+      if (err.message.includes('ETIMEDOUT') || err.message.includes('timeout')) {
+        return res.status(503).json({ 
+          error: 'Timeout de conexión con MikroTik',
+          message: 'El router no responde. Verifique que esté encendido y accesible en la red.'
+        });
+      }
+      
+      if (err.message.includes('Invalid user name or password')) {
+        return res.status(401).json({ 
+          error: 'Credenciales inválidas',
+          message: 'Usuario o contraseña incorrectos para el MikroTik.'
+        });
+      }
+      
+      if (err.message.includes('ECONNREFUSED')) {
+        return res.status(503).json({ 
+          error: 'Conexión rechazada',
+          message: 'El servicio API del MikroTik no está habilitado o el puerto es incorrecto.'
+        });
+      }
+      
+      return res.status(500).json({ 
+        error: 'Error al escanear dispositivos',
+        message: err.message 
+      });
+    }
+  }
 }

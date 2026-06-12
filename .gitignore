@@ -37,3 +37,6 @@ yarn-error.log*
 
 # Prisma
 prisma/migrations/
+
+
+*.xlsx

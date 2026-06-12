@@ -1,0 +1,232 @@
+import { Request, Response } from 'express';
+import { MikrotikManagerService } from '../services/mikrotik-manager.service';
+import logger from '../utils/logger';
+
+export class MikrotikManagerController {
+  /**
+   * Helper to parse JSON error from service, or construct standard error payload
+   */
+  private static handleError(res: Response, err: any, defaultActionDesc: string) {
+    try {
+      // Check if the error is a serialized command metadata error
+      const errObj = JSON.parse(err.message);
+      if (errObj && errObj.command) {
+        return res.status(500).json({
+          success: false,
+          message: errObj.friendlyMessage,
+          errorDetails: errObj.rawError,
+          log: {
+            command: errObj.command,
+            args: errObj.args,
+            friendlyMessage: errObj.friendlyMessage,
+            timestamp: errObj.timestamp,
+            success: false,
+          },
+        });
+      }
+    } catch (e) {
+      // Not a JSON-serialized command error
+    }
+
+    logger.error(`Error no controlado en MikrotikManagerController: ${err.message || err}`);
+    return res.status(500).json({
+      success: false,
+      message: `Error interno al intentar: ${defaultActionDesc.toLowerCase()}.`,
+      errorDetails: err.message || String(err),
+    });
+  }
+
+  /**
+   * GET /api/nodes/:nodeId/mikrotik/interfaces
+   */
+  static async getInterfaces(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    try {
+      const data = await MikrotikManagerService.getInterfaces(nodeId);
+      return res.json({
+        success: true,
+        data,
+        log: {
+          command: '/interface/print & /interface/wireless/print',
+          friendlyMessage: 'Consulta de interfaces físicas e inalámbricas completada con éxito.',
+          timestamp: new Date().toISOString(),
+          success: true,
+        },
+      });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, 'Consultar interfaces de red');
+    }
+  }
+
+  /**
+   * POST /api/nodes/:nodeId/mikrotik/interfaces/set-state
+   */
+  static async setInterfaceState(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    const { name, disabled } = req.body;
+
+    if (!name || disabled === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Faltan parámetros requeridos: name (nombre de interfaz) y disabled (booleano).',
+      });
+    }
+
+    try {
+      const result = await MikrotikManagerService.setInterfaceState(nodeId, name, disabled);
+      return res.json(result);
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, `Cambiar estado de interfaz ${name}`);
+    }
+  }
+
+  /**
+   * POST /api/nodes/:nodeId/mikrotik/interfaces/wireless/configure
+   */
+  static async configureWireless(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    const { name, ssid, frequency, disabled } = req.body;
+
+    if (!name || !ssid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Faltan parámetros requeridos: name (nombre de interfaz wlan) y ssid.',
+      });
+    }
+
+    try {
+      const result = await MikrotikManagerService.configureWireless(nodeId, name, ssid, frequency, disabled);
+      return res.json(result);
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, `Configurar interfaz inalámbrica ${name}`);
+    }
+  }
+
+  /**
+   * GET /api/nodes/:nodeId/mikrotik/interfaces/:interfaceName/traffic
+   */
+  static async monitorTraffic(req: Request, res: Response) {
+    const { nodeId, interfaceName } = req.params;
+    try {
+      const result = await MikrotikManagerService.monitorInterfaceTraffic(nodeId, interfaceName);
+      return res.json(result);
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, `Monitorear tráfico de interfaz ${interfaceName}`);
+    }
+  }
+
+  /**
+   * GET /api/nodes/:nodeId/mikrotik/ip-dhcp
+   */
+  static async getIpDhcpData(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    try {
+      const data = await MikrotikManagerService.getIpDhcpData(nodeId);
+      return res.json({
+        success: true,
+        data,
+        log: {
+          command: '/ip/address/print & /ip/dhcp-server/lease/print & /ip/arp/print',
+          friendlyMessage: 'Consulta de direccionamiento IP, DHCP leases y tablas ARP completada.',
+          timestamp: new Date().toISOString(),
+          success: true,
+        },
+      });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, 'Obtener direccionamiento IP y DHCP');
+    }
+  }
+
+  /**
+   * GET /api/nodes/:nodeId/mikrotik/ppp
+   */
+  static async getPppData(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    try {
+      const data = await MikrotikManagerService.getPppData(nodeId);
+      return res.json({
+        success: true,
+        data,
+        log: {
+          command: '/ppp/secret/print & /ppp/active/print & /ppp/profile/print',
+          friendlyMessage: 'Lectura de secretos, perfiles y sesiones activas PPPoE finalizada.',
+          timestamp: new Date().toISOString(),
+          success: true,
+        },
+      });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, 'Obtener información PPPoE');
+    }
+  }
+
+  /**
+   * GET /api/nodes/:nodeId/mikrotik/queues
+   */
+  static async getQueues(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    try {
+      const queues = await MikrotikManagerService.getQueues(nodeId);
+      return res.json({
+        success: true,
+        data: queues,
+        log: {
+          command: '/queue/simple/print',
+          friendlyMessage: 'Listado de colas simples de limitación de ancho de banda cargado.',
+          timestamp: new Date().toISOString(),
+          success: true,
+        },
+      });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, 'Obtener colas de ancho de banda');
+    }
+  }
+
+  /**
+   * GET /api/nodes/:nodeId/mikrotik/firewall
+   */
+  static async getFirewallData(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    try {
+      const data = await MikrotikManagerService.getFirewallData(nodeId);
+      return res.json({
+        success: true,
+        data,
+        log: {
+          command: '/ip/firewall/nat/print & /ip/firewall/filter/print & /ip/firewall/address-list/print',
+          friendlyMessage: 'Lectura de reglas NAT, filtros de firewall y address lists completada.',
+          timestamp: new Date().toISOString(),
+          success: true,
+        },
+      });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, 'Consultar tablas del Firewall');
+    }
+  }
+
+  /**
+   * POST /api/nodes/:nodeId/mikrotik/command
+   */
+  static async runRawCommand(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    const { command, args, friendlyActionDesc } = req.body;
+
+    if (!command) {
+      return res.status(400).json({
+        success: false,
+        message: 'Falta parámetro requerido: command (ej: /ip/dns/print).',
+      });
+    }
+
+    try {
+      const result = await MikrotikManagerService.runCommand(
+        nodeId,
+        command,
+        args,
+        friendlyActionDesc || `Ejecución de comando: ${command}`
+      );
+      return res.json(result);
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, `Ejecutar comando RouterOS: ${command}`);
+    }
+  }
+}

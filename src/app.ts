@@ -11,6 +11,10 @@ import contractRoutes from './routes/contract.routes';
 import invoiceRoutes from './routes/invoice.routes';
 import paymentRoutes from './routes/payment.routes';
 import dashboardRoutes from './routes/dashboard.routes';
+import auditRoutes from './routes/audit.routes';
+import mikrotikTestRoutes from './routes/mikrotik-test.routes';
+import mikrotikManagerRoutes from './routes/mikrotik-manager.routes';
+import migrationRoutes from './routes/migration.routes';
 
 const app = express();
 
@@ -33,6 +37,10 @@ app.use('/api/contracts', contractRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/audit', auditRoutes);
+app.use('/api/mikrotik-test', mikrotikTestRoutes);
+app.use('/api/nodes/:nodeId/mikrotik', mikrotikManagerRoutes);
+app.use('/api/migration', migrationRoutes);
 
 // Base route
 app.get('/', (req, res) => {
