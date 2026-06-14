@@ -11,11 +11,33 @@ export class PlanController {
         include: {
           _count: {
             select: { contracts: true }
+          },
+          contracts: {
+            where: { status: 'ACTIVE' },
+            select: { node: { select: { id: true, name: true } } }
           }
         },
         orderBy: { name: 'asc' },
       });
-      return res.json(plans);
+
+      const plansWithNodes = plans.map(plan => {
+        const nodeCounts: Record<string, { id: string, name: string, count: number }> = {};
+        for (const contract of plan.contracts) {
+          if (!contract.node) continue;
+          if (!nodeCounts[contract.node.id]) {
+            nodeCounts[contract.node.id] = { id: contract.node.id, name: contract.node.name, count: 0 };
+          }
+          nodeCounts[contract.node.id].count++;
+        }
+        
+        const { contracts, ...planData } = plan;
+        return {
+          ...planData,
+          nodesBreakdown: Object.values(nodeCounts)
+        };
+      });
+
+      return res.json(plansWithNodes);
     } catch (err: any) {
       logger.error(`Error listando planes: ${err.message}`);
       return res.status(500).json({ error: 'Error al obtener planes' });

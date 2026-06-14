@@ -19,6 +19,7 @@ export class InvoiceController {
           contract: {
             include: {
               plan: true,
+              node: true,
             },
           },
         },
