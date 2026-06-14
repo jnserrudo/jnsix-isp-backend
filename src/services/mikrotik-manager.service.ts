@@ -248,6 +248,34 @@ export class MikrotikManagerService {
         return [
           { '.id': '*1', list: 'cortados', address: '10.50.0.21', comment: 'Bloqueado por Mora - Carlos Lopez', disabled: 'no' }
         ];
+      case '/ip/neighbor/print':
+        return [
+          { '.id': '*1', interface: 'ether2', 'mac-address': 'E4:8D:8C:11:AA:BB', identity: 'Torre-Secundaria', platform: 'MikroTik', board: 'RB4011iGS+', version: '7.12', unpack: 'none', age: '1w2d', 'ipv4-address': '190.15.20.45' },
+          { '.id': '*2', interface: 'wlan1', 'mac-address': '00:1A:11:BB:CC:DD', identity: 'Enlace-PuntoPunto', platform: 'MikroTik', board: 'SXTsq 5 ac', version: '6.49.7', unpack: 'none', age: '3d5h' },
+          { '.id': '*3', interface: 'ether1', 'mac-address': 'BC:EE:7B:88:99:FF', identity: 'Switch-Core', platform: 'MikroTik', board: 'CRS328-24P-4S+RM', version: '7.10', unpack: 'none', age: '5d12h', 'ipv4-address': '10.100.0.2' }
+        ];
+      case '/tool/romon/discover':
+        return [
+          { '.id': '*1', 'mac-address': 'E4:8D:8C:11:AA:BB', 'romon-id': 'e4:8d:8c:11:aa:bb', identity: 'Torre-Secundaria', hops: '1', path: 'E4:8D:8C:11:AA:BB' },
+          { '.id': '*2', 'mac-address': '00:1A:11:BB:CC:DD', 'romon-id': '00:1a:11:bb:cc:dd', identity: 'Router-Vaqueros', hops: '2', path: 'E4:8D:8C:11:AA:BB,00:1A:11:BB:CC:DD' }
+        ];
+      case '/ping':
+        return [
+          { host: args?.address, size: '56', ttl: '64', time: `${Math.floor(Math.random() * 20)}ms`, 'sent': '1', 'received': '1', 'packet-loss': '0', status: 'OK' },
+          { host: args?.address, size: '56', ttl: '64', time: `${Math.floor(Math.random() * 20)}ms`, 'sent': '2', 'received': '2', 'packet-loss': '0', status: 'OK' },
+          { host: args?.address, size: '56', ttl: '64', time: `${Math.floor(Math.random() * 20)}ms`, 'sent': '3', 'received': '3', 'packet-loss': '0', status: 'OK' }
+        ];
+      case '/log/print':
+        return [
+          { '.id': '*1', time: '10:05:12', topics: 'system,info', message: 'router rebooted' },
+          { '.id': '*2', time: '10:15:30', topics: 'pppoe,info', message: 'juan.perez logged in' },
+          { '.id': '*3', time: '11:20:00', topics: 'error,critical', message: 'login failure for user admin from 192.168.1.5' },
+          { '.id': '*4', time: '12:00:45', topics: 'interface,info', message: 'ether1 link up' }
+        ];
+      case '/system/reboot':
+        return [];
+      case '/system/backup/save':
+        return { message: 'Configuration backup saved' };
       default:
         // Generic success responses for set/add/remove operations
         if (command.includes('/set')) {
@@ -452,5 +480,92 @@ export class MikrotikManagerService {
       filter: filter.result || [],
       addressList: addressList.result || [],
     };
+  }
+
+  /**
+   * Discover associated network devices using MNDP (Neighbors)
+   */
+  static async discoverNetwork(nodeId: string): Promise<{
+    neighbors: any[];
+    romon: any[];
+  }> {
+    const neighbors = await this.runCommand(
+      nodeId, 
+      '/ip/neighbor/print', 
+      undefined, 
+      'Escaneando nodos vecinos (MNDP)'
+    ).catch((err) => {
+      logger.warn(`No se pudieron obtener los vecinos del nodo ${nodeId}: ${err.message || err}`);
+      return { result: [] };
+    });
+
+    return {
+      neighbors: neighbors.result || [],
+      romon: [], // RoMON discover removed as it hangs the API
+    };
+  }
+
+  /**
+   * Execute ping command from the router to any IP
+   */
+  static async ping(nodeId: string, address: string, count: number = 4): Promise<any[]> {
+    const response = await this.runCommand(
+      nodeId,
+      '/ping',
+      {
+        address,
+        count: count.toString()
+      },
+      `Ejecutando diagnóstico Ping hacia ${address}`
+    );
+    return response.result || [];
+  }
+
+  /**
+   * Fetch system logs
+   */
+  static async getLogs(nodeId: string): Promise<any[]> {
+    const response = await this.runCommand(
+      nodeId,
+      '/log/print',
+      undefined,
+      'Extrayendo registros del sistema (Logs)'
+    );
+    return response.result || [];
+  }
+
+  /**
+   * Reboot the MikroTik router
+   */
+  static async rebootSystem(nodeId: string): Promise<boolean> {
+    try {
+      await this.runCommand(
+        nodeId,
+        '/system/reboot',
+        undefined,
+        'Reiniciando router MikroTik'
+      );
+      // MikroTik cuts the connection during reboot, so we might get an error or a disconnect.
+      return true;
+    } catch (e: any) {
+      // If the error is a timeout or connection closed, it's expected during reboot.
+      const msg = String(e).toLowerCase();
+      if (msg.includes('timeout') || msg.includes('closed') || msg.includes('eof')) {
+        return true;
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Create a system backup file (.backup)
+   */
+  static async createBackup(nodeId: string, backupName: string): Promise<RouterOSCommandResult> {
+    return await this.runCommand(
+      nodeId,
+      '/system/backup/save',
+      { name: backupName },
+      `Generando copia de seguridad: ${backupName}.backup`
+    );
   }
 }

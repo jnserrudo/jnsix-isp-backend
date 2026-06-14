@@ -8,6 +8,17 @@ const router = Router({ mergeParams: true });
 router.use(authenticateJWT);
 router.use(requireRole(['ADMIN', 'OPERATOR']));
 
+// Network Discovery (MNDP / RoMON)
+router.get('/discover', MikrotikManagerController.discoverNetwork);
+
+// Diagnostics
+router.post('/ping', MikrotikManagerController.pingTarget);
+
+// System Management
+router.get('/logs', MikrotikManagerController.getSystemLogs);
+router.post('/reboot', MikrotikManagerController.rebootRouter);
+router.post('/backup', MikrotikManagerController.createBackupFile);
+
 // Interface & Wireless Routes
 router.get('/interfaces', MikrotikManagerController.getInterfaces);
 router.post('/interfaces/set-state', MikrotikManagerController.setInterfaceState);

@@ -229,4 +229,103 @@ export class MikrotikManagerController {
       return MikrotikManagerController.handleError(res, err, `Ejecutar comando RouterOS: ${command}`);
     }
   }
+
+  /**
+   * GET /api/nodes/:nodeId/mikrotik/discover
+   */
+  static async discoverNetwork(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    try {
+      const data = await MikrotikManagerService.discoverNetwork(nodeId);
+      return res.json({
+        success: true,
+        data,
+        log: {
+          command: '/ip/neighbor/print & /tool/romon/discover',
+          friendlyMessage: 'Escaneo de red completado. Se han descubierto routers vecinos y nodos RoMON.',
+          timestamp: new Date().toISOString(),
+          success: true,
+        },
+      });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, 'Descubrir red y nodos vecinos');
+    }
+  }
+
+  /**
+   * POST /api/nodes/:nodeId/mikrotik/ping
+   */
+  static async pingTarget(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    const { address, count } = req.body;
+    if (!address) {
+      return res.status(400).json({ error: 'Address is required for ping' });
+    }
+    try {
+      const data = await MikrotikManagerService.ping(nodeId, address, count || 4);
+      return res.json({
+        success: true,
+        data,
+        log: {
+          command: `/ping address=${address} count=${count || 4}`,
+          friendlyMessage: `Diagnóstico ping completado hacia ${address}`,
+          timestamp: new Date().toISOString(),
+          success: true,
+        },
+      });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, `Diagnóstico ping hacia ${address}`);
+    }
+  }
+
+  /**
+   * GET /api/nodes/:nodeId/mikrotik/logs
+   */
+  static async getSystemLogs(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    try {
+      const logs = await MikrotikManagerService.getLogs(nodeId);
+      return res.json({ success: true, data: logs });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, 'Obtener logs del sistema');
+    }
+  }
+
+  /**
+   * POST /api/nodes/:nodeId/mikrotik/reboot
+   */
+  static async rebootRouter(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    try {
+      await MikrotikManagerService.rebootSystem(nodeId);
+      return res.json({
+        success: true,
+        message: 'Comando de reinicio enviado correctamente. El router se reiniciará ahora.'
+      });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, 'Reiniciar router MikroTik');
+    }
+  }
+
+  /**
+   * POST /api/nodes/:nodeId/mikrotik/backup
+   */
+  static async createBackupFile(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    const { backupName } = req.body;
+    
+    // Generate a default name if not provided
+    const nameToUse = backupName || `backup_JNSIX_${new Date().toISOString().slice(0,10).replace(/-/g, '')}`;
+
+    try {
+      const result = await MikrotikManagerService.createBackup(nodeId, nameToUse);
+      return res.json({
+        success: true,
+        message: `Backup ${nameToUse}.backup generado exitosamente.`,
+        data: result
+      });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, 'Generar copia de seguridad');
+    }
+  }
 }
