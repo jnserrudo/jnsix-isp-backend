@@ -82,7 +82,7 @@ async function main() {
     console.log("Copiando logs de auditoría...");
     const auditLogs = await sourcePrisma.auditLog.findMany();
     if (auditLogs.length > 0) {
-      await destPrisma.auditLog.createMany({ data: auditLogs, skipDuplicates: true });
+      await destPrisma.auditLog.createMany({ data: auditLogs as any, skipDuplicates: true });
     }
     console.log(`✅ ${auditLogs.length} logs copiados.`);
 
