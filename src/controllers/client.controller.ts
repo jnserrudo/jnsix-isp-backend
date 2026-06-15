@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import prisma from '../services/db.service';
 import logger from '../utils/logger';
 import { MikrotikService } from '../services/mikrotik.service';
+import { AuditService } from '../services/audit.service';
+import { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 export class ClientController {
   static async list(req: Request, res: Response) {
@@ -112,6 +114,19 @@ export class ClientController {
         },
       });
 
+      const user = (req as AuthenticatedRequest).user;
+      await AuditService.logAction({
+        entity: 'CLIENT',
+        entityId: client.id,
+        action: 'CREATE',
+        description: `Cliente creado: ${client.fullName}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataAfter: client
+      });
+
       return res.status(201).json(client);
     } catch (err: any) {
       logger.error(`Error creando cliente: ${err.message}`);
@@ -181,6 +196,20 @@ export class ClientController {
         },
       });
 
+      const user = (req as AuthenticatedRequest).user;
+      await AuditService.logAction({
+        entity: 'CLIENT',
+        entityId: client.id,
+        action: 'UPDATE',
+        description: `Cliente modificado: ${updated.fullName}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataBefore: client,
+        dataAfter: updated
+      });
+
       return res.json(updated);
     } catch (err: any) {
       logger.error(`Error actualizando cliente ${req.params.id}: ${err.message}`);
@@ -191,7 +220,22 @@ export class ClientController {
   static async delete(req: Request, res: Response) {
     try {
       const { id } = req.params;
+      const client = await prisma.client.findUnique({ where: { id } });
       await prisma.client.delete({ where: { id } });
+
+      const user = (req as AuthenticatedRequest).user;
+      await AuditService.logAction({
+        entity: 'CLIENT',
+        entityId: id,
+        action: 'DELETE',
+        description: `Cliente eliminado: ${client?.fullName || id}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataBefore: client
+      });
+
       return res.json({ message: 'Cliente eliminado correctamente' });
     } catch (err: any) {
       logger.error(`Error eliminando cliente ${req.params.id}: ${err.message}`);
@@ -219,6 +263,18 @@ export class ClientController {
         results.push({ contractId: contract.id, ...result });
       }
 
+      const user = (req as AuthenticatedRequest).user;
+      await AuditService.logAction({
+        entity: 'CLIENT',
+        entityId: id,
+        action: 'BLOCK',
+        description: `Corte de servicio manual ejecutado. Contratos afectados: ${contracts.length}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
       return res.json({ message: 'Bloqueo manual completado', results });
     } catch (err: any) {
       logger.error(`Error bloqueando cliente manualmente: ${err.message}`);
@@ -245,6 +301,18 @@ export class ClientController {
         const result = await MikrotikService.unblockContract(contract.id, 'MANUAL');
         results.push({ contractId: contract.id, ...result });
       }
+
+      const user = (req as AuthenticatedRequest).user;
+      await AuditService.logAction({
+        entity: 'CLIENT',
+        entityId: id,
+        action: 'UNBLOCK',
+        description: `Reactivación manual ejecutada. Contratos afectados: ${contracts.length}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
 
       return res.json({ message: 'Reactivación manual completada', results });
     } catch (err: any) {

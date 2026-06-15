@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../services/db.service';
 import logger from '../utils/logger';
+import { AuditService } from '../services/audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 export class ContractController {
   static async list(req: Request, res: Response) {
@@ -88,6 +90,19 @@ export class ContractController {
         },
       });
 
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.CONTRACT,
+        entityId: contract.id,
+        action: AuditAction.CREATE,
+        description: `Contrato creado para el cliente ID ${clientId} (Plan: ${plan.name})`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataAfter: contract
+      });
+
       return res.status(201).json(contract);
     } catch (err: any) {
       logger.error(`Error creando contrato: ${err.message}`);
@@ -134,6 +149,20 @@ export class ContractController {
         },
       });
 
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.CONTRACT,
+        entityId: contract.id,
+        action: AuditAction.UPDATE,
+        description: `Contrato actualizado (Estado: ${status || contract.status})`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataBefore: contract,
+        dataAfter: updated
+      });
+
       return res.json(updated);
     } catch (err: any) {
       logger.error(`Error actualizando contrato: ${err.message}`);
@@ -144,7 +173,22 @@ export class ContractController {
   static async delete(req: Request, res: Response) {
     try {
       const { id } = req.params;
+      const contract = await prisma.serviceContract.findUnique({ where: { id } });
       await prisma.serviceContract.delete({ where: { id } });
+
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.CONTRACT,
+        entityId: id,
+        action: AuditAction.DELETE,
+        description: `Contrato eliminado (Cliente ID: ${contract?.clientId || 'Desconocido'})`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataBefore: contract
+      });
+
       return res.json({ message: 'Contrato eliminado correctamente' });
     } catch (err: any) {
       logger.error(`Error eliminando contrato: ${err.message}`);

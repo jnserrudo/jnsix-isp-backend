@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import prisma from '../services/db.service';
 import logger from '../utils/logger';
 import { MikrotikService } from '../services/mikrotik.service';
+import { AuditService } from '../services/audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 export class NodeController {
   static async list(req: Request, res: Response) {
@@ -55,6 +57,20 @@ export class NodeController {
           notes,
         },
       });
+
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.NODE,
+        entityId: node.id,
+        action: AuditAction.CREATE,
+        description: `Nodo creado: ${node.name} (${node.mikrotikHost})`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataAfter: node
+      });
+
       return res.status(201).json(node);
     } catch (err: any) {
       logger.error(`Error creando nodo: ${err.message}`);
@@ -87,6 +103,21 @@ export class NodeController {
           isActive,
         },
       });
+
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.NODE,
+        entityId: node.id,
+        action: AuditAction.UPDATE,
+        description: `Nodo actualizado: ${updated.name}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataBefore: node,
+        dataAfter: updated
+      });
+
       return res.json(updated);
     } catch (err: any) {
       logger.error(`Error actualizando nodo: ${err.message}`);
@@ -102,7 +133,22 @@ export class NodeController {
         return res.status(400).json({ error: 'No se puede eliminar el nodo porque tiene clientes asignados' });
       }
 
+      const node = await prisma.node.findUnique({ where: { id } });
       await prisma.node.delete({ where: { id } });
+
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.NODE,
+        entityId: id,
+        action: AuditAction.DELETE,
+        description: `Nodo eliminado: ${node?.name || id}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataBefore: node
+      });
+
       return res.json({ message: 'Nodo eliminado correctamente' });
     } catch (err: any) {
       logger.error(`Error eliminando nodo: ${err.message}`);

@@ -21,16 +21,17 @@ export class AuditService {
    * Registra una acción en el log de auditoría
    */
   static async logAction(params: LogActionParams): Promise<void> {
-    const startTime = Date.now();
+    // Fire and forget pattern: we execute the logging in the background
+    // so it doesn't block the main HTTP response, making the app much faster.
+    const runLogging = async () => {
+      const startTime = Date.now();
 
-    try {
-      // Calcular cambios si hay datos antes y después
-      const changes = params.dataBefore && params.dataAfter
-        ? this.calculateChanges(params.dataBefore, params.dataAfter)
-        : null;
+      try {
+        const changes = params.dataBefore && params.dataAfter
+          ? this.calculateChanges(params.dataBefore, params.dataAfter)
+          : null;
 
-      await prisma.auditLog.create({
-        data: {
+        const dataPayload: any = {
           entity: params.entity,
           entityId: params.entityId,
           action: params.action,
@@ -45,12 +46,47 @@ export class AuditService {
           success: params.success !== undefined ? params.success : true,
           errorMessage: params.errorMessage,
           executionTimeMs: Date.now() - startTime,
-        },
-      });
-    } catch (error) {
-      console.error('Error logging audit action:', error);
-      // No lanzar error para no interrumpir el flujo principal
-    }
+        };
+
+        await prisma.auditLog.create({ data: dataPayload });
+      } catch (error: any) {
+        // P2003 = Foreign key constraint failed. Usually happens if a User was deleted 
+        // from the DB but the operator is still using an old JWT token.
+        if (error.code === 'P2003') {
+          console.log(`[Audit] FK violation for user ${params.userId}. Retrying without user ID...`);
+          try {
+            const fallbackChanges = params.dataBefore && params.dataAfter
+              ? this.calculateChanges(params.dataBefore, params.dataAfter) : null;
+              
+            await prisma.auditLog.create({
+              data: {
+                entity: params.entity,
+                entityId: params.entityId,
+                action: params.action,
+                description: params.description,
+                userId: null, // Drop the invalid userId
+                userEmail: params.userEmail || 'SYSTEM',
+                ipAddress: params.ipAddress,
+                userAgent: params.userAgent,
+                dataBefore: params.dataBefore ? JSON.parse(JSON.stringify(params.dataBefore)) : null,
+                dataAfter: params.dataAfter ? JSON.parse(JSON.stringify(params.dataAfter)) : null,
+                changes: fallbackChanges,
+                success: params.success !== undefined ? params.success : true,
+                errorMessage: params.errorMessage,
+                executionTimeMs: Date.now() - startTime,
+              }
+            });
+            return;
+          } catch (retryError) {
+            console.error('[Audit] Retry failed:', retryError);
+          }
+        } else {
+          console.error('[Audit] Error logging action:', error);
+        }
+      }
+    };
+
+    runLogging();
   }
 
   /**
@@ -99,8 +135,9 @@ export class AuditService {
     page?: number;
     pageSize?: number;
   }) {
-    const page = filters.page || 0;
-    const pageSize = filters.pageSize || 50;
+    // Si la página viene como 1 desde el frontend, el skip debe ser 0.
+    const page = filters.page ? Math.max(1, filters.page) : 1;
+    const pageSize = filters.pageSize || 15;
 
     const where: Prisma.AuditLogWhereInput = {};
 
@@ -127,7 +164,7 @@ export class AuditService {
           },
         },
         orderBy: { createdAt: 'desc' },
-        skip: page * pageSize,
+        skip: (page - 1) * pageSize,
         take: pageSize,
       }),
       prisma.auditLog.count({ where }),

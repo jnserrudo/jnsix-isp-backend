@@ -82,6 +82,8 @@ enum AuditEntity {
   MIKROTIK
   SYSTEM
   IMPORT
+  TICKET
+  INVENTORY_ITEM
 }
 
 enum AuditAction {
@@ -98,6 +100,7 @@ enum AuditAction {
   TERMINATE
   IMPORT_EXCEL
   EXPORT
+  SYSTEM_JOB
 }
 
 enum ImportStatus {

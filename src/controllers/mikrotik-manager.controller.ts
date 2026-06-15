@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { MikrotikManagerService } from '../services/mikrotik-manager.service';
 import logger from '../utils/logger';
+import { AuditService } from '../services/audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 export class MikrotikManagerController {
   /**
@@ -74,6 +76,19 @@ export class MikrotikManagerController {
 
     try {
       const result = await MikrotikManagerService.setInterfaceState(nodeId, name, disabled);
+      
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.MIKROTIK,
+        entityId: nodeId,
+        action: AuditAction.UPDATE,
+        description: `Interfaz ${name} configurada como ${disabled ? 'deshabilitada' : 'habilitada'} en nodo ${nodeId}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
       return res.json(result);
     } catch (err: any) {
       return MikrotikManagerController.handleError(res, err, `Cambiar estado de interfaz ${name}`);
@@ -96,6 +111,19 @@ export class MikrotikManagerController {
 
     try {
       const result = await MikrotikManagerService.configureWireless(nodeId, name, ssid, frequency, disabled);
+      
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.MIKROTIK,
+        entityId: nodeId,
+        action: AuditAction.UPDATE,
+        description: `Configuración inalámbrica cambiada en interfaz ${name} (SSID: ${ssid}) en nodo ${nodeId}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
       return res.json(result);
     } catch (err: any) {
       return MikrotikManagerController.handleError(res, err, `Configurar interfaz inalámbrica ${name}`);
@@ -224,6 +252,20 @@ export class MikrotikManagerController {
         args,
         friendlyActionDesc || `Ejecución de comando: ${command}`
       );
+      
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.MIKROTIK,
+        entityId: nodeId,
+        action: AuditAction.UPDATE,
+        description: `Comando crudo ejecutado en nodo ${nodeId}: ${command}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataAfter: { command, args }
+      });
+
       return res.json(result);
     } catch (err: any) {
       return MikrotikManagerController.handleError(res, err, `Ejecutar comando RouterOS: ${command}`);

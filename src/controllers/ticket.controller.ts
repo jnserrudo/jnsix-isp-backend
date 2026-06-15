@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../services/db.service';
 import logger from '../utils/logger';
+import { AuditService } from '../services/audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 export class TicketController {
   static async list(req: Request, res: Response) {
@@ -66,6 +68,19 @@ export class TicketController {
         }
       });
 
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.TICKET,
+        entityId: ticket.id,
+        action: AuditAction.CREATE,
+        description: `Ticket creado: ${ticket.title}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataAfter: ticket
+      });
+
       return res.status(201).json(ticket);
     } catch (err: any) {
       logger.error(`Error creando ticket: ${err.message}`);
@@ -103,6 +118,20 @@ export class TicketController {
         }
       });
 
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.TICKET,
+        entityId: id,
+        action: AuditAction.UPDATE,
+        description: `Ticket actualizado: ${updated.title}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataBefore: existingTicket,
+        dataAfter: updated
+      });
+
       return res.json(updated);
     } catch (err: any) {
       logger.error(`Error actualizando ticket ${req.params.id}: ${err.message}`);
@@ -113,7 +142,22 @@ export class TicketController {
   static async delete(req: Request, res: Response) {
     try {
       const { id } = req.params;
+      const ticket = await prisma.ticket.findUnique({ where: { id } });
       await prisma.ticket.delete({ where: { id } });
+
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.TICKET,
+        entityId: id,
+        action: AuditAction.DELETE,
+        description: `Ticket eliminado: ${ticket?.title || id}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataBefore: ticket
+      });
+
       return res.json({ message: 'Ticket eliminado correctamente' });
     } catch (err: any) {
       logger.error(`Error eliminando ticket ${req.params.id}: ${err.message}`);

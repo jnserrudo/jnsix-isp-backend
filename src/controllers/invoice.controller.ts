@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import prisma from '../services/db.service';
 import logger from '../utils/logger';
 import { BillingService } from '../services/billing.service';
+import { AuditService } from '../services/audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 export class InvoiceController {
   static async list(req: Request, res: Response) {
@@ -67,6 +69,17 @@ export class InvoiceController {
       const result = await BillingService.generateMonthlyInvoices(runDate);
       await BillingService.checkOverdueInvoices(runDate);
       
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.SYSTEM,
+        action: AuditAction.SYSTEM_JOB,
+        description: `Motor de facturación ejecutado manualmente. Facturas generadas: ${result.count}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
       return res.json({ message: 'Proceso de facturación ejecutado con éxito', ...result });
     } catch (err: any) {
       logger.error(`Error al ejecutar facturación manual: ${err.message}`);
@@ -83,6 +96,18 @@ export class InvoiceController {
       const runDate = date ? new Date(date) : new Date();
 
       const result = await BillingService.processAutomaticCuts(runDate);
+
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.SYSTEM,
+        action: AuditAction.SYSTEM_JOB,
+        description: `Motor de cortes ejecutado manualmente. Clientes suspendidos: ${result.cutsExecuted}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
       return res.json({ message: 'Motor de cortes ejecutado con éxito', ...result });
     } catch (err: any) {
       logger.error(`Error al ejecutar motor de cortes manual: ${err.message}`);
@@ -111,6 +136,20 @@ export class InvoiceController {
           status: 'OVERDUE',
           dueDate: targetDate,
         },
+      });
+
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.INVOICE,
+        entityId: id,
+        action: AuditAction.UPDATE,
+        description: `Factura forzada a vencida manualmente`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataBefore: invoice,
+        dataAfter: updated
       });
 
       return res.json({ message: 'Factura marcada como vencida', invoice: updated });

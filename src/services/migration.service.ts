@@ -3,6 +3,8 @@ import path from 'path';
 import prisma from './db.service';
 import { MikrotikManagerService } from './mikrotik-manager.service';
 import logger from '../utils/logger';
+import { AuditService } from './audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 interface ExcelClient {
   "Nombre y Apellido": string;
@@ -337,19 +339,17 @@ export class MigrationService {
     }
 
     // Write audit log
-    try {
-      await prisma.auditLog.create({
-        data: {
-          entity: 'IMPORT',
-          action: 'IMPORT_EXCEL',
+      try {
+        await AuditService.logAction({
+          entity: AuditEntity.IMPORT,
+          action: AuditAction.IMPORT_EXCEL,
           description: `Migración masiva completada. Exitosos: ${importedCount}, Errores: ${errorCount}. Nodo: ${nodeId}`,
           userId: userId,
           success: errorCount === 0,
-          errorMessage: errorCount > 0 ? `Errores en ${errorCount} filas.` : null,
+          errorMessage: errorCount > 0 ? `Errores en ${errorCount} filas.` : undefined,
           dataAfter: { importedCount, errorCount, errors }
-        }
-      });
-    } catch (e) {
+        });
+      } catch (e) {
       logger.error('Error escribiendo log de auditoría de importación:', e);
     }
 
@@ -387,17 +387,15 @@ export class MigrationService {
     });
 
     // 3. Write audit log
-    try {
-      await prisma.auditLog.create({
-        data: {
-          entity: 'IMPORT',
-          action: 'DELETE',
+      try {
+        await AuditService.logAction({
+          entity: AuditEntity.IMPORT,
+          action: AuditAction.DELETE,
           description: `Limpieza de migración completada. Clientes eliminados: ${deleted.count}. Nodo: ${nodeId}`,
           userId,
           success: true
-        }
-      });
-    } catch (e) {
+        });
+      } catch (e) {
       logger.error('Error escribiendo log de auditoría de limpieza:', e);
     }
 

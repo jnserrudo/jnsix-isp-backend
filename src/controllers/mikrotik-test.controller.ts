@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { RouterOSAPI } from 'node-routeros';
 import logger from '../utils/logger';
+import { AuditService } from '../services/audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 export class MikrotikTestController {
   /**
@@ -97,6 +99,18 @@ export class MikrotikTestController {
 
       await conn.close();
 
+      const reqUser = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.MIKROTIK,
+        action: AuditAction.UPDATE,
+        description: `Prueba de comando Mikrotik: ${command}`,
+        userId: reqUser?.id,
+        userEmail: reqUser?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataAfter: { host, command, args }
+      });
+
       res.json({
         success: true,
         command,
@@ -146,6 +160,18 @@ export class MikrotikTestController {
 
       await conn.close();
 
+      const reqUser = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.MIKROTIK,
+        action: AuditAction.CREATE,
+        description: `Secret PPPoE de prueba creado: ${username}`,
+        userId: reqUser?.id,
+        userEmail: reqUser?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataAfter: { host, username }
+      });
+
       res.json({
         success: true,
         message: 'Secret PPPoE creado',
@@ -193,6 +219,18 @@ export class MikrotikTestController {
       ]);
 
       await conn.close();
+
+      const reqUser = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.MIKROTIK,
+        action: AuditAction.CREATE,
+        description: `Queue de prueba creada: ${name} (${maxLimit})`,
+        userId: reqUser?.id,
+        userEmail: reqUser?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataAfter: { host, name, maxLimit }
+      });
 
       res.json({
         success: true,

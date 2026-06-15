@@ -4,6 +4,8 @@ import jwt from 'jsonwebtoken';
 import prisma from '../services/db.service';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import logger from '../utils/logger';
+import { AuditService } from '../services/audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'jnsix-isp-super-secret-key-change-this-in-production';
 
@@ -54,6 +56,18 @@ export class AuthController {
         { expiresIn: '30d' } // Long-lasting token for convenience
       );
 
+      // Log successful login
+      await AuditService.logAction({
+        entity: AuditEntity.USER,
+        entityId: user.id,
+        action: AuditAction.LOGIN,
+        description: `Usuario ha iniciado sesión (${user.role})`,
+        userId: user.id,
+        userEmail: user.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
       return res.json({
         token,
         user: {
@@ -96,6 +110,24 @@ export class AuthController {
           fullName,
           role: role || 'OPERATOR',
         },
+      });
+
+      const requestUser = req.user;
+      await AuditService.logAction({
+        entity: AuditEntity.USER,
+        entityId: newUser.id,
+        action: AuditAction.CREATE,
+        description: `Nuevo usuario registrado: ${newUser.fullName} (${newUser.role})`,
+        userId: requestUser?.id,
+        userEmail: requestUser?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataAfter: {
+          id: newUser.id,
+          email: newUser.email,
+          fullName: newUser.fullName,
+          role: newUser.role
+        }
       });
 
       return res.status(201).json({

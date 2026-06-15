@@ -3,6 +3,8 @@ import prisma from '../services/db.service';
 import logger from '../utils/logger';
 import { BillingService } from '../services/billing.service';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
+import { AuditService } from '../services/audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 export class PaymentController {
   static async list(req: AuthenticatedRequest, res: Response) {
@@ -44,6 +46,18 @@ export class PaymentController {
         receivedById,
         notes
       );
+
+      await AuditService.logAction({
+        entity: AuditEntity.PAYMENT,
+        entityId: result.payment.id,
+        action: AuditAction.CREATE,
+        description: `Pago registrado: $${amount} via ${paymentMethod} para la factura ${invoiceId}`,
+        userId: req.user?.id,
+        userEmail: req.user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataAfter: result.payment
+      });
 
       return res.status(201).json(result);
     } catch (err: any) {
