@@ -15,6 +15,9 @@ import auditRoutes from './routes/audit.routes';
 import mikrotikTestRoutes from './routes/mikrotik-test.routes';
 import mikrotikManagerRoutes from './routes/mikrotik-manager.routes';
 import migrationRoutes from './routes/migration.routes';
+import ticketRoutes from './routes/ticket.routes';
+import notificationRoutes from './routes/notification.routes';
+import portalRoutes from './routes/portal.routes';
 
 const app = express();
 
@@ -41,6 +44,9 @@ app.use('/api/audit', auditRoutes);
 app.use('/api/mikrotik-test', mikrotikTestRoutes);
 app.use('/api/nodes/:nodeId/mikrotik', mikrotikManagerRoutes);
 app.use('/api/migration', migrationRoutes);
+app.use('/api/tickets', ticketRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/portal', portalRoutes);
 
 // Base route
 app.get('/', (req, res) => {

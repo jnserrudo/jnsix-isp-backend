@@ -6,8 +6,11 @@ import app from './app';
 import logger from './utils/logger';
 import prisma from './services/db.service';
 import { SchedulerService } from './services/scheduler.service';
+import inventoryRoutes from './routes/inventory.routes';
 
 const PORT = process.env.PORT || 4000;
+
+app.use('/api/inventory', inventoryRoutes);
 
 async function startServer() {
   try {

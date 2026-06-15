@@ -67,12 +67,13 @@ export class ClientController {
         address,
         latitude,
         longitude,
+        clientCode,
         installationDate,
         notes,
       } = req.body;
 
-      if (!fullName || !dni || !address) {
-        return res.status(400).json({ error: 'Nombre, DNI y Dirección son requeridos' });
+      if (!fullName || !dni || !address || !clientCode) {
+        return res.status(400).json({ error: 'Nombre, DNI, Dirección y Código de Cliente son requeridos' });
       }
 
       if (latitude !== undefined && latitude !== null && latitude !== '') {
@@ -98,6 +99,7 @@ export class ClientController {
         data: {
           fullName,
           dni,
+          clientCode,
           phone1,
           phone2,
           email,
@@ -129,6 +131,7 @@ export class ClientController {
         address,
         latitude,
         longitude,
+        clientCode,
         installationDate,
         status,
         notes,
@@ -165,6 +168,7 @@ export class ClientController {
         data: {
           fullName,
           dni,
+          clientCode,
           phone1,
           phone2,
           email,

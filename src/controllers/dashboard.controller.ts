@@ -20,42 +20,46 @@ export class DashboardController {
         actionWhere.nodeId = nodeId;
       }
 
-      // Run queries sequentially to respect Clever Cloud's low connection limit
-      const clientStatusCounts = await prisma.client.groupBy({
-        by: ['status'],
-        where: clientWhere,
-        _count: { id: true }
-      });
-
-      const invoicesThisMonth = await prisma.invoice.findMany({
-        where: {
-          ...invoiceWhere,
-          issuedAt: { gte: startOfMonth, lte: endOfMonth },
-        },
-        select: { amount: true, status: true },
-      });
-
-      const totalOverdueInvoices = await prisma.invoice.aggregate({
-        where: { ...invoiceWhere, status: 'OVERDUE' },
-        _count: true,
-        _sum: { amount: true },
-      });
-
-      const recentActions = await prisma.mikrotikAction.findMany({
-        where: actionWhere,
-        take: 15,
-        orderBy: { executedAt: 'desc' },
-        include: {
-          node: { select: { name: true } },
-          contract: {
-            include: {
-              client: { select: { fullName: true } },
+      // Run queries concurrently for much faster load times
+      const [
+        clientStatusCounts,
+        invoicesThisMonth,
+        totalOverdueInvoices,
+        recentActions,
+        nodesCount
+      ] = await Promise.all([
+        prisma.client.groupBy({
+          by: ['status'],
+          where: clientWhere,
+          _count: { id: true }
+        }),
+        prisma.invoice.findMany({
+          where: {
+            ...invoiceWhere,
+            issuedAt: { gte: startOfMonth, lte: endOfMonth },
+          },
+          select: { amount: true, status: true },
+        }),
+        prisma.invoice.aggregate({
+          where: { ...invoiceWhere, status: 'OVERDUE' },
+          _count: true,
+          _sum: { amount: true },
+        }),
+        prisma.mikrotikAction.findMany({
+          where: actionWhere,
+          take: 15,
+          orderBy: { executedAt: 'desc' },
+          include: {
+            node: { select: { name: true } },
+            contract: {
+              include: {
+                client: { select: { fullName: true } },
+              },
             },
           },
-        },
-      });
-
-      const nodesCount = await prisma.node.count();
+        }),
+        prisma.node.count()
+      ]);
 
       // Calculate totals from clientStatusCounts
       let totalClients = 0;

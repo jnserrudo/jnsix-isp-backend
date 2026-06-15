@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import logger from '../utils/logger';
 import { BillingService } from './billing.service';
+import { TrafficMonitorService } from './traffic.service';
 
 export class SchedulerService {
   static init() {
@@ -29,6 +30,15 @@ export class SchedulerService {
     });
     */
 
-    logger.info('Tareas programadas registradas: Facturación (00:05). Motor de Cortes deshabilitado por el momento.');
+    // 3. Every 5 minutes: Check traffic saturation
+    cron.schedule('*/5 * * * *', async () => {
+      try {
+        await TrafficMonitorService.checkTrafficSaturation();
+      } catch (err: any) {
+        logger.error(`Error en tarea de monitor de tráfico: ${err.message}`);
+      }
+    });
+
+    logger.info('Tareas programadas registradas: Facturación (00:05), Monitor Tráfico (c/5m). Motor de Cortes deshabilitado por el momento.');
   }
 }
