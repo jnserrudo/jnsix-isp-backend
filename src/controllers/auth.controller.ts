@@ -10,17 +10,16 @@ import { AuditEntity, AuditAction } from '@prisma/client';
 const JWT_SECRET = process.env.JWT_SECRET || 'jnsix-isp-super-secret-key-change-this-in-production';
 
 export class AuthController {
-  /**
-   * Logs in a user, returns token and user info.
-   * Auto-creates a seed admin user if no users exist.
-   */
   static async login(req: AuthenticatedRequest, res: Response) {
     try {
+      // "email" en el frontend ahora puede ser email (Admin) o DNI (Cliente)
       const { email, password } = req.body;
 
       if (!email || !password) {
-        return res.status(400).json({ error: 'Email y contraseña requeridos' });
+        return res.status(400).json({ error: 'Usuario (Email/DNI) y contraseña requeridos' });
       }
+
+      const identifier = email.trim().toLowerCase();
 
       // Check if DB has any users. If empty, create default admin.
       const userCount = await prisma.user.count();
@@ -37,46 +36,98 @@ export class AuthController {
         });
       }
 
-      const user = await prisma.user.findUnique({
-        where: { email: email.toLowerCase() },
-      });
+      // Si tiene @, intentamos login de Administrador/Operador
+      if (identifier.includes('@')) {
+        const user = await prisma.user.findUnique({
+          where: { email: identifier },
+        });
 
-      if (!user || !user.isActive) {
-        return res.status(401).json({ error: 'Credenciales inválidas o usuario inactivo' });
+        if (!user || !user.isActive) {
+          return res.status(401).json({ error: 'Credenciales inválidas o usuario inactivo' });
+        }
+
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+          return res.status(401).json({ error: 'Credenciales inválidas' });
+        }
+
+        const token = jwt.sign(
+          { id: user.id, email: user.email, role: user.role },
+          JWT_SECRET,
+          { expiresIn: '30d' }
+        );
+
+        await AuditService.logAction({
+          entity: AuditEntity.USER,
+          entityId: user.id,
+          action: AuditAction.LOGIN,
+          description: `Usuario ha iniciado sesión (${user.role})`,
+          userId: user.id,
+          userEmail: user.email,
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent'],
+        });
+
+        return res.json({
+          token,
+          user: {
+            id: user.id,
+            email: user.email,
+            fullName: user.fullName,
+            role: user.role,
+            isClient: false
+          },
+        });
+      } else {
+        // Es un DNI (Cliente)
+        const client = await prisma.client.findUnique({
+          where: { dni: identifier }, // En la BD el DNI está como ingresaron, podría ser TEMP-xxx o número.
+        });
+
+        if (!client || client.status !== 'ACTIVE') {
+          return res.status(401).json({ error: 'DNI no encontrado o cliente inactivo' });
+        }
+
+        if (!client.password) {
+          return res.status(401).json({ error: 'Su cuenta no tiene contraseña asignada aún.' });
+        }
+
+        const isMatch = await bcrypt.compare(password, client.password);
+        if (!isMatch) {
+          return res.status(401).json({ error: 'Contraseña incorrecta' });
+        }
+
+        // Token para cliente
+        const token = jwt.sign(
+          { id: client.id, email: client.email || client.dni, role: 'CLIENT' }, // Asignamos rol virtual CLIENT
+          JWT_SECRET,
+          { expiresIn: '30d' }
+        );
+
+        await AuditService.logAction({
+          entity: AuditEntity.CLIENT,
+          entityId: client.id,
+          action: AuditAction.LOGIN,
+          description: `Cliente ha iniciado sesión desde Portal de Autogestión`,
+          userId: undefined, // Como no es User, no ponemos userId
+          userEmail: client.dni,
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent'],
+        });
+
+        return res.json({
+          token,
+          user: {
+            id: client.id,
+            email: client.email || '',
+            dni: client.dni,
+            fullName: client.fullName,
+            role: 'CLIENT',
+            isClient: true
+          },
+        });
       }
 
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        return res.status(401).json({ error: 'Credenciales inválidas' });
-      }
-
-      const token = jwt.sign(
-        { id: user.id, email: user.email, role: user.role },
-        JWT_SECRET,
-        { expiresIn: '30d' } // Long-lasting token for convenience
-      );
-
-      // Log successful login
-      await AuditService.logAction({
-        entity: AuditEntity.USER,
-        entityId: user.id,
-        action: AuditAction.LOGIN,
-        description: `Usuario ha iniciado sesión (${user.role})`,
-        userId: user.id,
-        userEmail: user.email,
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-      });
-
-      return res.json({
-        token,
-        user: {
-          id: user.id,
-          email: user.email,
-          fullName: user.fullName,
-          role: user.role,
-        },
-      });
     } catch (err: any) {
       logger.error(`Error en login: ${err.message}`);
       return res.status(500).json({ error: 'Error del servidor durante el inicio de sesión' });

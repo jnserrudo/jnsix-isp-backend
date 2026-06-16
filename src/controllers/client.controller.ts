@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
 import prisma from '../services/db.service';
 import logger from '../utils/logger';
 import { MikrotikService } from '../services/mikrotik.service';
@@ -97,6 +98,9 @@ export class ClientController {
         return res.status(400).json({ error: 'Ya existe un cliente con ese DNI' });
       }
 
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(dni, salt);
+
       const client = await prisma.client.create({
         data: {
           fullName,
@@ -105,6 +109,7 @@ export class ClientController {
           phone1,
           phone2,
           email,
+          password: hashedPassword,
           address,
           latitude: latitude ? Number(latitude) : null,
           longitude: longitude ? Number(longitude) : null,
@@ -171,11 +176,17 @@ export class ClientController {
         }
       }
 
+      let hashedPassword = undefined;
+
       if (dni && dni !== client.dni) {
         const existingDni = await prisma.client.findUnique({ where: { dni } });
         if (existingDni) {
           return res.status(400).json({ error: 'El DNI ya se encuentra registrado' });
         }
+        
+        // Si el DNI cambió, actualizamos la contraseña por defecto
+        const salt = await bcrypt.genSalt(10);
+        hashedPassword = await bcrypt.hash(dni, salt);
       }
 
       const updated = await prisma.client.update({
@@ -193,6 +204,7 @@ export class ClientController {
           installationDate: installationDate ? new Date(installationDate) : undefined,
           status,
           notes,
+          ...(hashedPassword && { password: hashedPassword }),
         },
       });
 

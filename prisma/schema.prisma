@@ -175,6 +175,7 @@ model Client {
   phone1           String?      @map("phone_1")
   phone2           String?      @map("phone_2")
   email            String?
+  password         String?      // Contraseña para el Portal del Cliente
   clientCode       String?      @unique @map("client_code")
   address          String       @db.Text
   latitude         Decimal?     @db.Decimal(10, 8)

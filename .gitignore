@@ -40,3 +40,9 @@ prisma/migrations/
 
 
 *.xlsx
+
+# Untracked files
+check_db.ts
+src/scripts/set-client-passwords.ts
+
+../src/scripts/

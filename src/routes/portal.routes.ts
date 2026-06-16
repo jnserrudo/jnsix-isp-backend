@@ -4,7 +4,8 @@ import { authenticateJWT } from '../middleware/auth.middleware';
 
 const router = Router();
 
-router.post('/login', PortalController.login);
 router.get('/my-info', authenticateJWT, PortalController.getMyInfo);
+router.get('/tickets', authenticateJWT, PortalController.getMyTickets);
+router.post('/tickets', authenticateJWT, PortalController.createTicket);
 
 export default router;
