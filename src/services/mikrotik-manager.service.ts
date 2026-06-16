@@ -96,7 +96,7 @@ export class MikrotikManagerService {
     const timestamp = new Date().toISOString();
 
     if (isMock) {
-      const mockResult = this.generateMockData(command, args);
+      const mockResult = this.generateMockData(command, args, node);
       logger.info(`[SIMULACIÓN] Nodo: ${node.name} | Comando: ${command} | Args: ${JSON.stringify(args)}`);
       return {
         command,
@@ -157,7 +157,7 @@ export class MikrotikManagerService {
   /**
    * Generates realistic mockup data for various RouterOS print & set commands.
    */
-  private static generateMockData(command: string, args: any): any {
+  private static generateMockData(command: string, args: any, node?: any): any {
     switch (command) {
       case '/interface/print':
         return [
@@ -273,38 +273,43 @@ export class MikrotikManagerService {
           { '.id': '*4', time: '12:00:45', topics: 'interface,info', message: 'ether1 link up' }
         ];
       case '/system/resource/print':
+        const isRB5009 = node?.name?.toLowerCase().includes('5009') || node?.name?.toLowerCase().includes('central');
         return [
           {
             uptime: '5w2d14h30m',
             version: '7.12.1 (Stable)',
             'build-time': 'Nov/20/2023 12:45:10',
             'factory-software': '6.48.3',
-            'free-memory': '184549376',
-            'total-memory': '268435456',
-            cpu: 'MIPS',
-            'cpu-count': '1',
-            'cpu-frequency': '650MHz',
+            'free-memory': isRB5009 ? '814549376' : '184549376',
+            'total-memory': isRB5009 ? '1073741824' : '268435456',
+            cpu: isRB5009 ? 'ARM64' : 'MIPS',
+            'cpu-count': isRB5009 ? '4' : '1',
+            'cpu-frequency': isRB5009 ? '1400MHz' : '650MHz',
             'cpu-load': '12',
             'free-hdd-space': '42106880',
             'total-hdd-space': '67108864',
-            'architecture-name': 'mipsbe',
-            'board-name': 'hAP ac lite',
+            'architecture-name': isRB5009 ? 'arm64' : 'mipsbe',
+            'board-name': isRB5009 ? 'RB5009UG+S+' : 'hAP ac lite',
             platform: 'MikroTik'
           }
         ];
       case '/system/routerboard/print':
+        const isRB5009_2 = node?.name?.toLowerCase().includes('5009') || node?.name?.toLowerCase().includes('central');
         return [
           {
             routerboard: 'yes',
-            model: 'RB952Ui-5ac2nD',
-            'serial-number': 'HC809ABCDEF',
+            model: isRB5009_2 ? 'RB5009UG+S+IN' : 'RB952Ui-5ac2nD',
+            'serial-number': isRB5009_2 ? 'HE909ABCDEF' : 'HC809ABCDEF',
             'current-firmware': '7.12.1',
             'upgrade-firmware': '7.12.1'
           }
         ];
       case '/system/identity/print':
+        const cleanName = node?.name
+          ? node.name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+          : 'RouterOS';
         return [
-          { name: 'RouterOS-Core-Vaqueros' }
+          { name: `${cleanName}-Core` }
         ];
       case '/system/reboot':
         return [];
