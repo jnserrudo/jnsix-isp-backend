@@ -272,6 +272,40 @@ export class MikrotikManagerService {
           { '.id': '*3', time: '11:20:00', topics: 'error,critical', message: 'login failure for user admin from 192.168.1.5' },
           { '.id': '*4', time: '12:00:45', topics: 'interface,info', message: 'ether1 link up' }
         ];
+      case '/system/resource/print':
+        return [
+          {
+            uptime: '5w2d14h30m',
+            version: '7.12.1 (Stable)',
+            'build-time': 'Nov/20/2023 12:45:10',
+            'factory-software': '6.48.3',
+            'free-memory': '184549376',
+            'total-memory': '268435456',
+            cpu: 'MIPS',
+            'cpu-count': '1',
+            'cpu-frequency': '650MHz',
+            'cpu-load': '12',
+            'free-hdd-space': '42106880',
+            'total-hdd-space': '67108864',
+            'architecture-name': 'mipsbe',
+            'board-name': 'hAP ac lite',
+            platform: 'MikroTik'
+          }
+        ];
+      case '/system/routerboard/print':
+        return [
+          {
+            routerboard: 'yes',
+            model: 'RB952Ui-5ac2nD',
+            'serial-number': 'HC809ABCDEF',
+            'current-firmware': '7.12.1',
+            'upgrade-firmware': '7.12.1'
+          }
+        ];
+      case '/system/identity/print':
+        return [
+          { name: 'RouterOS-Core-Vaqueros' }
+        ];
       case '/system/reboot':
         return [];
       case '/system/backup/save':
@@ -567,5 +601,50 @@ export class MikrotikManagerService {
       { name: backupName },
       `Generando copia de seguridad: ${backupName}.backup`
     );
+  }
+
+  /**
+   * Fetch system resources, hardware info and identity
+   */
+  static async getSystemResources(nodeId: string): Promise<{
+    resource: any;
+    routerboard: any;
+    identity: any;
+  }> {
+    const resourceResult = await this.runCommand(
+      nodeId,
+      '/system/resource/print',
+      undefined,
+      'Obteniendo recursos del sistema'
+    ).catch((err) => {
+      logger.warn(`No se pudieron obtener recursos del sistema para el nodo ${nodeId}: ${err.message || err}`);
+      return { result: [{}] };
+    });
+
+    const routerboardResult = await this.runCommand(
+      nodeId,
+      '/system/routerboard/print',
+      undefined,
+      'Obteniendo información del Routerboard'
+    ).catch((err) => {
+      logger.warn(`No se pudo obtener información del Routerboard para el nodo ${nodeId}: ${err.message || err}`);
+      return { result: [{}] };
+    });
+
+    const identityResult = await this.runCommand(
+      nodeId,
+      '/system/identity/print',
+      undefined,
+      'Obteniendo identidad del sistema'
+    ).catch((err) => {
+      logger.warn(`No se pudo obtener identidad del sistema para el nodo ${nodeId}: ${err.message || err}`);
+      return { result: [{ name: 'MikroTik' }] };
+    });
+
+    return {
+      resource: resourceResult.result?.[0] || {},
+      routerboard: routerboardResult.result?.[0] || {},
+      identity: identityResult.result?.[0] || { name: 'MikroTik' },
+    };
   }
 }

@@ -18,6 +18,7 @@ router.post('/ping', MikrotikManagerController.pingTarget);
 router.get('/logs', MikrotikManagerController.getSystemLogs);
 router.post('/reboot', MikrotikManagerController.rebootRouter);
 router.post('/backup', MikrotikManagerController.createBackupFile);
+router.get('/system-resources', MikrotikManagerController.getSystemResources);
 
 // Interface & Wireless Routes
 router.get('/interfaces', MikrotikManagerController.getInterfaces);

@@ -370,4 +370,26 @@ export class MikrotikManagerController {
       return MikrotikManagerController.handleError(res, err, 'Generar copia de seguridad');
     }
   }
+
+  /**
+   * GET /api/nodes/:nodeId/mikrotik/system-resources
+   */
+  static async getSystemResources(req: Request, res: Response) {
+    const { nodeId } = req.params;
+    try {
+      const data = await MikrotikManagerService.getSystemResources(nodeId);
+      return res.json({
+        success: true,
+        data,
+        log: {
+          command: '/system/resource/print & /system/routerboard/print',
+          friendlyMessage: 'Consulta de recursos y hardware del sistema completada.',
+          timestamp: new Date().toISOString(),
+          success: true
+        }
+      });
+    } catch (err: any) {
+      return MikrotikManagerController.handleError(res, err, 'Obtener recursos del sistema y Routerboard');
+    }
+  }
 }
