@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticateJWT);
 
 router.get('/', ClientController.list);
+router.get('/generate-code', ClientController.generateCode);
 router.get('/:id', ClientController.getById);
 router.post('/', requireRole(['ADMIN', 'OPERATOR']), ClientController.create);
 router.put('/:id', requireRole(['ADMIN', 'OPERATOR']), ClientController.update);

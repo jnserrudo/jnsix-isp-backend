@@ -59,6 +59,23 @@ export class ClientController {
     }
   }
 
+  /**
+   * Generates a unique, short client code (e.g. "CLI-4A2X").
+   */
+  static async generateCode(req: Request, res: Response) {
+    const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no confusing chars (0/O, 1/I)
+    let code: string;
+    let attempts = 0;
+    do {
+      const random = Array.from({ length: 4 }, () => CHARS[Math.floor(Math.random() * CHARS.length)]).join('');
+      code = `CLI-${random}`;
+      attempts++;
+      if (attempts > 50) break; // safety valve
+    } while (await prisma.client.findFirst({ where: { clientCode: code } }));
+
+    return res.json({ code });
+  }
+
   static async create(req: Request, res: Response) {
     try {
       const {
@@ -70,10 +87,13 @@ export class ClientController {
         address,
         latitude,
         longitude,
-        clientCode,
         installationDate,
         notes,
       } = req.body;
+
+      // Sanitize clientCode: empty string or whitespace-only → null
+      const rawCode = req.body.clientCode;
+      const clientCode: string | null = rawCode && rawCode.trim() ? rawCode.trim() : null;
 
       if (!fullName || !dni || !address || !clientCode) {
         return res.status(400).json({ error: 'Nombre, DNI, Dirección y Código de Cliente son requeridos' });
@@ -96,6 +116,12 @@ export class ClientController {
       const existingClient = await prisma.client.findUnique({ where: { dni } });
       if (existingClient) {
         return res.status(400).json({ error: 'Ya existe un cliente con ese DNI' });
+      }
+
+      // Proactive uniqueness check for clientCode
+      const codeConflict = await prisma.client.findFirst({ where: { clientCode } });
+      if (codeConflict) {
+        return res.status(400).json({ error: `El código de cliente "${clientCode}" ya está en uso por otro cliente` });
       }
 
       const salt = await bcrypt.genSalt(10);
@@ -151,15 +177,22 @@ export class ClientController {
         address,
         latitude,
         longitude,
-        clientCode,
         installationDate,
         status,
         notes,
       } = req.body;
 
+      // Sanitize clientCode: empty string or whitespace-only → null
+      const rawCode = req.body.clientCode;
+      const clientCode: string | null = rawCode && rawCode.trim() ? rawCode.trim() : null;
+
       const client = await prisma.client.findUnique({ where: { id } });
       if (!client) {
         return res.status(404).json({ error: 'Cliente no encontrado' });
+      }
+
+      if (!fullName || !dni || !clientCode) {
+        return res.status(400).json({ error: 'Nombre, DNI y Código de Cliente son requeridos' });
       }
 
       if (latitude !== undefined && latitude !== null && latitude !== '') {
@@ -187,6 +220,14 @@ export class ClientController {
         // Si el DNI cambió, actualizamos la contraseña por defecto
         const salt = await bcrypt.genSalt(10);
         hashedPassword = await bcrypt.hash(dni, salt);
+      }
+
+      // Proactive uniqueness check for clientCode (exclude current client)
+      if (clientCode && clientCode !== client.clientCode) {
+        const codeConflict = await prisma.client.findFirst({ where: { clientCode, NOT: { id } } });
+        if (codeConflict) {
+          return res.status(400).json({ error: `El código de cliente "${clientCode}" ya está en uso por otro cliente` });
+        }
       }
 
       const updated = await prisma.client.update({

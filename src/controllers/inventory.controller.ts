@@ -34,14 +34,37 @@ export const getInventoryItem = async (req: Request, res: Response) => {
 
 export const createInventoryItem = async (req: Request, res: Response) => {
   try {
-    const { name, type, status, serialNumber, macAddress, quantity, assignedTo, notes } = req.body;
+    const { name, type, status, macAddress, quantity, assignedTo, notes } = req.body;
+
+    // Sanitizar serialNumber: vacío o sólo espacios → null
+    const rawSerial = req.body.serialNumber;
+    const serialNumber: string | null = rawSerial && rawSerial.trim() ? rawSerial.trim() : null;
+
+    // Validación de campos requeridos
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'El nombre del ítem es requerido.' });
+    }
+    if (!type) {
+      return res.status(400).json({ error: 'El tipo de ítem es requerido.' });
+    }
+
+    // Validación proactiva de unicidad del número de serie
+    if (serialNumber) {
+      const conflict = await prisma.inventoryItem.findFirst({ where: { serialNumber } });
+      if (conflict) {
+        return res.status(400).json({
+          error: `El número de serie "${serialNumber}" ya está registrado para el ítem "${conflict.name}". Verificá el número antes de continuar.`
+        });
+      }
+    }
+
     const newItem = await prisma.inventoryItem.create({
       data: {
-        name,
+        name: name.trim(),
         type,
         status,
-        serialNumber: serialNumber || null,
-        macAddress: macAddress || null,
+        serialNumber,
+        macAddress: macAddress?.trim() || null,
         quantity: Number(quantity) || 1,
         assignedTo: assignedTo || null,
         notes,
@@ -71,15 +94,40 @@ export const createInventoryItem = async (req: Request, res: Response) => {
 export const updateInventoryItem = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, type, status, serialNumber, macAddress, quantity, assignedTo, notes } = req.body;
+    const { name, type, status, macAddress, quantity, assignedTo, notes } = req.body;
+
+    // Sanitizar serialNumber: vacío o sólo espacios → null
+    const rawSerial = req.body.serialNumber;
+    const serialNumber: string | null = rawSerial && rawSerial.trim() ? rawSerial.trim() : null;
+
+    // Validación de campos requeridos
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'El nombre del ítem es requerido.' });
+    }
+    if (!type) {
+      return res.status(400).json({ error: 'El tipo de ítem es requerido.' });
+    }
+
+    // Validación proactiva de unicidad del número de serie (excluyendo el propio ítem)
+    if (serialNumber) {
+      const conflict = await prisma.inventoryItem.findFirst({
+        where: { serialNumber, NOT: { id } }
+      });
+      if (conflict) {
+        return res.status(400).json({
+          error: `El número de serie "${serialNumber}" ya está registrado para el ítem "${conflict.name}". Verificá el número antes de continuar.`
+        });
+      }
+    }
+
     const updatedItem = await prisma.inventoryItem.update({
       where: { id },
       data: {
-        name,
+        name: name.trim(),
         type,
         status,
-        serialNumber: serialNumber || null,
-        macAddress: macAddress || null,
+        serialNumber,
+        macAddress: macAddress?.trim() || null,
         quantity: Number(quantity) || 1,
         assignedTo: assignedTo || null,
         notes,

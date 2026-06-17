@@ -43,6 +43,6 @@ prisma/migrations/
 
 # Untracked files
 check_db.ts
-src/scripts/set-client-passwords.ts
 
-../src/scripts/
+# Scripts (one-shot / utilities) — never commit
+src/scripts/
