@@ -730,18 +730,18 @@ export class MikrotikService {
       const wirelessMap = new Map();
 
       // Indexar DHCP por IP y MAC
-      dhcp.forEach((lease: any) => {
+      (dhcp || []).forEach((lease: any) => {
         if (lease.address) dhcpMap.set(lease.address, lease);
         if (lease['mac-address']) dhcpMap.set(lease['mac-address'], lease);
       });
 
       // Indexar PPPoE por IP
-      pppoe.forEach((session: any) => {
+      (pppoe || []).forEach((session: any) => {
         if (session.address) pppoeMap.set(session.address, session);
       });
 
       // Indexar Wireless por MAC
-      wireless.forEach((client: any) => {
+      (wireless || []).forEach((client: any) => {
         if (client['mac-address']) wirelessMap.set(client['mac-address'], client);
       });
 
@@ -770,7 +770,7 @@ export class MikrotikService {
       });
 
       // Normalizar y fusionar datos
-      const connections = arp
+      const connections = (arp || [])
         .filter((entry: any) => entry.address && entry['mac-address']) // Solo entradas válidas
         .map((entry: any) => {
           const ip = entry.address;
