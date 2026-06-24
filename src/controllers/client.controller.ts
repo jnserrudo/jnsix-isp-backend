@@ -52,7 +52,18 @@ export class ClientController {
         return res.status(404).json({ error: 'Cliente no encontrado' });
       }
 
-      return res.json(client);
+      // IMPORT BillingService dynamic mapping to attach debtInfo to invoices
+      const { BillingService } = require('../services/billing.service');
+      const invoicesWithDebt = await Promise.all(client.invoices.map(async (inv) => {
+        try {
+          const debtInfo = await BillingService.getInvoiceDebt(inv.id);
+          return { ...inv, debtInfo };
+        } catch (e) {
+          return inv;
+        }
+      }));
+
+      return res.json({ ...client, invoices: invoicesWithDebt });
     } catch (err: any) {
       logger.error(`Error obteniendo cliente ${req.params.id}: ${err.message}`);
       return res.status(500).json({ error: 'Error al obtener el cliente' });

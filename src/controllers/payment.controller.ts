@@ -31,7 +31,7 @@ export class PaymentController {
 
   static async create(req: AuthenticatedRequest, res: Response) {
     try {
-      const { invoiceId, amount, paymentMethod, reference, notes } = req.body;
+      const { invoiceId, amount, paymentMethod, reference, notes, reconnect } = req.body;
       const receivedById = req.user?.id; // Logged in user id
 
       if (!invoiceId || !amount || !paymentMethod) {
@@ -44,7 +44,8 @@ export class PaymentController {
         paymentMethod,
         reference,
         receivedById,
-        notes
+        notes,
+        Boolean(reconnect)
       );
 
       await AuditService.logAction({
@@ -63,6 +64,80 @@ export class PaymentController {
     } catch (err: any) {
       logger.error(`Error registrando pago: ${err.message}`);
       return res.status(400).json({ error: err.message || 'Error al procesar el pago' });
+    }
+  }
+  static async update(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const { amount, paymentMethod, reference, notes } = req.body;
+
+      const existingPayment = await prisma.payment.findUnique({ where: { id } });
+      if (!existingPayment) return res.status(404).json({ error: 'Pago no encontrado' });
+
+      const updatedPayment = await prisma.payment.update({
+        where: { id },
+        data: {
+          amount: amount ? Number(amount) : undefined,
+          paymentMethod,
+          reference,
+          notes,
+        }
+      });
+
+      // Recalculate invoice status
+      const debtInfo = await BillingService.getInvoiceDebt(existingPayment.invoiceId);
+      const newStatus = debtInfo.balance <= 0 ? 'PAID' : 'PARTIAL';
+      await prisma.invoice.update({
+        where: { id: existingPayment.invoiceId },
+        data: { status: newStatus, paidAt: newStatus === 'PAID' ? new Date() : null }
+      });
+
+            await AuditService.logAction({
+        entity: AuditEntity.PAYMENT,
+        entityId: id,
+        action: AuditAction.UPDATE,
+        description: `Pago actualizado: $${amount} via ${paymentMethod}`,
+        userId: req.user?.id,
+        dataBefore: existingPayment,
+        dataAfter: updatedPayment
+      });
+      return res.json({ message: 'Pago actualizado', payment: updatedPayment });
+    } catch (err: any) {
+      logger.error(`Error actualizando pago: ${err.message}`);
+      return res.status(500).json({ error: 'Error al actualizar el pago' });
+    }
+  }
+
+  static async delete(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      
+      const existingPayment = await prisma.payment.findUnique({ where: { id } });
+      if (!existingPayment) return res.status(404).json({ error: 'Pago no encontrado' });
+
+      await prisma.payment.delete({ where: { id } });
+
+      // Recalculate invoice status
+      const debtInfo = await BillingService.getInvoiceDebt(existingPayment.invoiceId);
+      const newStatus = debtInfo.balance <= 0 ? 'PAID' : debtInfo.totalPayments > 0 ? 'PARTIAL' : (debtInfo.daysLate > 0 ? 'OVERDUE' : 'PENDING');
+      
+      await prisma.invoice.update({
+        where: { id: existingPayment.invoiceId },
+        data: { status: newStatus, paidAt: newStatus === 'PAID' ? new Date() : null }
+      });
+
+            await AuditService.logAction({
+        entity: AuditEntity.PAYMENT,
+        entityId: id,
+        action: AuditAction.DELETE,
+        description: 'Pago eliminado',
+        userId: req.user?.id,
+        dataBefore: existingPayment
+      });
+      return res.json({ message: 'Pago eliminado' });
+    } catch (err: any) {
+      logger.error(`Error eliminando pago: ${err.message}`);
+      return res.status(500).json({ error: 'Error al eliminar el pago' });
     }
   }
 }

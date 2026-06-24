@@ -18,7 +18,8 @@ import migrationRoutes from './routes/migration.routes';
 import ticketRoutes from './routes/ticket.routes';
 import notificationRoutes from './routes/notification.routes';
 import portalRoutes from './routes/portal.routes';
-
+import inventoryRoutes from './routes/inventory.routes';
+import settingsRoutes from './routes/settings.routes';
 const app = express();
 
 // Middlewares
@@ -47,6 +48,8 @@ app.use('/api/migration', migrationRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/portal', portalRoutes);
+app.use('/api/inventory', inventoryRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Base route
 app.get('/', (req, res) => {

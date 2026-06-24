@@ -40,9 +40,19 @@ enum OltType {
 
 enum InvoiceStatus {
   PENDING
+  PARTIAL
   PAID
   OVERDUE
   CANCELLED
+}
+
+enum InvoiceItemType {
+  PLAN_FEE
+  LATE_FEE
+  RECONNECTION_FEE
+  INSTALLATION_FEE
+  ADJUSTMENT
+  OTHER
 }
 
 enum PaymentMethod {
@@ -313,6 +323,7 @@ model Invoice {
   client   Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   payments Payment[]
+  items    InvoiceItem[]
 
   @@index([contractId])
   @@index([clientId])
@@ -475,4 +486,27 @@ model InventoryItem {
   @@index([type])
   @@index([assignedTo])
   @@map("inventory_items")
+}
+
+model InvoiceItem {
+  id          String          @id @default(uuid())
+  invoiceId   String          @map("invoice_id")
+  description String          @db.Text
+  amount      Decimal         @db.Decimal(10, 2)
+  type        InvoiceItemType @default(OTHER)
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  invoice     Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+model SystemSettings {
+  id                    String   @id @default("default")
+  dailyLateFee          Decimal  @default(3000) @db.Decimal(10, 2) @map("daily_late_fee")
+  reconnectionFee       Decimal  @default(4000) @db.Decimal(10, 2) @map("reconnection_fee")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
 }

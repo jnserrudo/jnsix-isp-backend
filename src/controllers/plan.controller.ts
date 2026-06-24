@@ -145,35 +145,87 @@ export class PlanController {
   static async delete(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      
-      // Check if plan is in use
-      const inUse = await prisma.serviceContract.findFirst({ where: { planId: id } });
-      if (inUse) {
-        return res.status(400).json({ error: 'No se puede eliminar el plan porque está asociado a contratos de clientes activos' });
+      const plan = await prisma.plan.findUnique({ where: { id }, include: { contracts: true } });
+      if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+
+      if (plan.contracts.length > 0) {
+        return res.status(400).json({ error: 'No se puede eliminar un plan con contratos activos' });
       }
 
-      const plan = await prisma.plan.findUnique({ where: { id } });
+      await prisma.plan.update({
+        where: { id },
+        data: { deletedAt: new Date(), deletedBy: (req as any).user?.email }
+      });
 
-      await prisma.plan.delete({ where: { id } });
-
-      // Registrar auditoría
-      if (plan) {
-        const user = (req as any).user;
-        await AuditService.logAction({
-          entity: AuditEntity.PLAN,
-          entityId: id,
-          action: AuditAction.DELETE,
-          description: `Plan de Internet eliminado: ${plan.name}`,
-          userId: user?.id,
-          userEmail: user?.email,
-          dataBefore: plan,
-        });
-      }
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.PLAN,
+        entityId: plan.id,
+        action: AuditAction.DELETE,
+        description: `Plan de Internet eliminado (Soft delete): ${plan.name}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        dataBefore: plan,
+      });
 
       return res.json({ message: 'Plan eliminado correctamente' });
     } catch (err: any) {
       logger.error(`Error eliminando plan: ${err.message}`);
       return res.status(500).json({ error: 'Error al eliminar plan' });
+    }
+  }
+
+  static async bulkIncrease(req: Request, res: Response) {
+    try {
+      const { planIds, type, amount, notify } = req.body; // type: 'PERCENTAGE' or 'FIXED'
+      
+      if (!planIds || !Array.isArray(planIds) || planIds.length === 0) {
+        return res.status(400).json({ error: 'Debe proporcionar al menos un ID de plan' });
+      }
+      if (!type || !['PERCENTAGE', 'FIXED'].includes(type) || !amount) {
+        return res.status(400).json({ error: 'Tipo y monto de aumento requeridos' });
+      }
+
+      const plans = await prisma.plan.findMany({ where: { id: { in: planIds } } });
+      const results = [];
+
+      for (const plan of plans) {
+        let newPrice = Number(plan.price);
+        if (type === 'PERCENTAGE') {
+          newPrice += newPrice * (Number(amount) / 100);
+        } else {
+          newPrice += Number(amount);
+        }
+
+        const updated = await prisma.plan.update({
+          where: { id: plan.id },
+          data: { price: newPrice }
+        });
+
+        results.push(updated);
+
+        const user = (req as any).user;
+        await AuditService.logAction({
+          entity: AuditEntity.PLAN,
+          entityId: plan.id,
+          action: AuditAction.UPDATE,
+          description: `Aumento masivo aplicado (${type}: ${amount}). Precio anterior: $${plan.price}, Nuevo: $${newPrice}`,
+          userId: user?.id,
+          userEmail: user?.email,
+          dataBefore: plan,
+          dataAfter: updated,
+        });
+      }
+
+      // TODO: Logic to send notifications to users if notify === true
+      if (notify) {
+        logger.info(`Se generarán notificaciones para los clientes de ${plans.length} planes aumentados.`);
+      }
+
+      return res.json({ message: 'Aumento masivo aplicado correctamente', results });
+    } catch (err: any) {
+      logger.error(`Error en aumento masivo: ${err.message}`);
+      return res.status(500).json({ error: 'Error al aplicar aumento masivo' });
     }
   }
 }

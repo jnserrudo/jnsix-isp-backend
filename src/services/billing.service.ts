@@ -1,38 +1,100 @@
+import { EventEmitter } from 'events';
 import prisma from './db.service';
+
+export const billingProgressEmitter = new EventEmitter();
 import logger from '../utils/logger';
 import { MikrotikService } from './mikrotik.service';
 
 export class BillingService {
-  /**
-   * Generates invoices for all contracts whose billing day is today
-   */
-  static async generateMonthlyInvoices(date: Date = new Date()): Promise<{ count: number }> {
+  static async getSystemSettings() {
+    let settings = await prisma.systemSettings.findUnique({ where: { id: 'default' } });
+    if (!settings) {
+      settings = await prisma.systemSettings.create({
+        data: { id: 'default', dailyLateFee: 3000, reconnectionFee: 4000 }
+      });
+    }
+    return settings;
+  }
+
+  static async getInvoiceDebt(invoiceId: string, date: Date = new Date()) {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { items: true, payments: true, contract: true }
+    });
+    if (!invoice) throw new Error('Factura no encontrada');
+
+    const baseTotal = invoice.items.reduce((sum, item) => sum + Number(item.amount), 0);
+    const activeTotal = baseTotal > 0 ? baseTotal : Number(invoice.amount);
+
+    const settings = await this.getSystemSettings();
+    const dailyMora = Number(settings.dailyLateFee);
+
+    let moraAmount = 0;
+    let daysLate = 0;
+    
+    const hasManualMora = invoice.items.some(i => i.type === 'LATE_FEE');
+    
+    if (!hasManualMora && invoice.status !== 'PAID' && invoice.status !== 'CANCELLED') {
+      const msLate = date.getTime() - new Date(invoice.dueDate).getTime();
+      daysLate = Math.floor(msLate / (1000 * 60 * 60 * 24));
+      if (daysLate > 0) {
+        moraAmount = daysLate * dailyMora;
+      }
+    }
+
+    const totalPayments = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const totalDebt = activeTotal + moraAmount;
+    const balance = totalDebt - totalPayments;
+
+    return {
+      activeTotal,
+      moraAmount,
+      daysLate,
+      totalPayments,
+      totalDebt,
+      balance: balance > 0 ? balance : 0,
+      invoice,
+      hasManualMora
+    };
+  }
+
+  static async generateMonthlyInvoices(date: Date = new Date(), ignoreBillingDay: boolean = false, nodeId?: string): Promise<{ count: number }> {
     const currentDay = date.getDate();
-    const currentMonth = date.getMonth() + 1; // 1-indexed
+    const currentMonth = date.getMonth() + 1;
     const currentYear = date.getFullYear();
     
-    logger.info(`Corriendo generación de facturas para el día ${currentDay}/${currentMonth}/${currentYear}...`);
+    logger.info(`Corriendo generación de facturas para el día ${currentDay}/${currentMonth}/${currentYear} (ignoreBillingDay: ${ignoreBillingDay}, nodeId: ${nodeId || 'ALL'})...`);
 
-    // Get all active contracts due today
+    const whereClause: any = { status: 'ACTIVE' };
+    if (!ignoreBillingDay) {
+      whereClause.billingDay = currentDay;
+    }
+    if (nodeId) {
+      whereClause.nodeId = nodeId;
+    }
+
     const contracts = await prisma.serviceContract.findMany({
-      where: {
-        status: 'ACTIVE',
-        billingDay: currentDay,
-      },
-      include: {
-        plan: true,
-      },
+      where: whereClause,
+      include: { plan: true },
     });
 
     let invoiceCount = 0;
+    const totalContracts = contracts.length;
 
-    for (const contract of contracts) {
-      // Define the period
+    for (let i = 0; i < totalContracts; i++) {
+      const contract = contracts[i];
+      const percentage = Math.round(((i + 1) / totalContracts) * 100);
+      billingProgressEmitter.emit('progress', {
+        current: i + 1,
+        total: totalContracts,
+        percentage,
+        nodeId: nodeId || 'ALL'
+      });
+
       const periodStart = new Date(currentYear, date.getMonth(), 1);
-      const periodEnd = new Date(currentYear, date.getMonth() + 1, 0); // last day of current month
-      const dueDate = new Date(currentYear, date.getMonth(), currentDay + 10); // 10 days to pay
+      const periodEnd = new Date(currentYear, date.getMonth() + 1, 0);
+      const dueDate = new Date(currentYear, date.getMonth(), currentDay + 10);
 
-      // Check if invoice already exists for this contract and period
       const existingInvoice = await prisma.invoice.findFirst({
         where: {
           contractId: contract.id,
@@ -41,15 +103,11 @@ export class BillingService {
         },
       });
 
-      if (existingInvoice) {
-        logger.debug(`La factura para el contrato ${contract.id} ya existe para este período. Saltando.`);
-        continue;
-      }
+      if (existingInvoice) continue;
 
-      // Generate invoice number e.g., FAC-202605-1234
       const timestamp = Date.now().toString().slice(-4);
       const shortContractId = contract.id.slice(0, 4).toUpperCase();
-      const invoiceNumber = `FAC-${currentYear}${currentMonth.toString().padStart(2, '0')}-${shortContractId}${timestamp}`;
+      const invoiceNumber = `FAC-${shortContractId}-${timestamp}`;
 
       try {
         await prisma.invoice.create({
@@ -62,44 +120,62 @@ export class BillingService {
             amount: contract.plan.price,
             dueDate,
             status: 'PENDING',
+            items: {
+              create: [
+                {
+                  description: `Abono Mensual Plan ${contract.plan.name}`,
+                  amount: contract.plan.price,
+                  type: 'PLAN_FEE'
+                }
+              ]
+            }
           },
         });
         invoiceCount++;
       } catch (err: any) {
+        logger.error(`Error creando factura para contrato ${contract.id}:`);
         logger.error(`Error creando factura para contrato ${contract.id}: ${err.message}`);
       }
     }
-
-    logger.info(`Generación de facturas completada. ${invoiceCount} facturas creadas.`);
     return { count: invoiceCount };
   }
 
-  /**
-   * Process client payment
-   * Updates invoice, creates payment log, and checks if unblocking is required
-   */
   static async processPayment(
-    invoiceId: string, 
-    amount: number, 
-    method: 'CASH' | 'TRANSFER' | 'MERCADO_PAGO' | 'OTHER', 
+    invoiceId: string,
+    amount: number,
+    method: 'CASH' | 'TRANSFER' | 'MERCADO_PAGO' | 'OTHER',
     reference?: string,
     receivedById?: string,
-    notes?: string
+    notes?: string,
+    reconnect?: boolean
   ): Promise<any> {
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: invoiceId },
-      include: { client: true, contract: true },
-    });
+    const debtInfo = await this.getInvoiceDebt(invoiceId);
+    if (debtInfo.invoice.status === 'PAID') throw new Error('Esta factura ya ha sido pagada');
 
-    if (!invoice) throw new Error('Factura no encontrada');
-    if (invoice.status === 'PAID') throw new Error('Esta factura ya ha sido pagada');
+    if (debtInfo.moraAmount > 0 && !debtInfo.hasManualMora) {
+      await prisma.invoiceItem.create({
+        data: {
+          invoiceId,
+          description: `Mora por atraso (${debtInfo.daysLate} días)`,
+          amount: debtInfo.moraAmount,
+          type: 'LATE_FEE'
+        }
+      });
+      debtInfo.activeTotal += debtInfo.moraAmount;
+      debtInfo.totalDebt = debtInfo.activeTotal;
+    }
 
-    // Create the payment and update invoice in a transaction
+    const newTotalPayments = debtInfo.totalPayments + amount;
+    const newBalance = debtInfo.totalDebt - newTotalPayments;
+    
+    // Status is PARTIAL if balance > 0, else PAID
+    const newStatus = newBalance <= 0.01 ? 'PAID' : 'PARTIAL';
+
     const [payment, updatedInvoice] = await prisma.$transaction([
       prisma.payment.create({
         data: {
           invoiceId,
-          clientId: invoice.clientId,
+          clientId: debtInfo.invoice.clientId,
           amount,
           paymentMethod: method,
           reference,
@@ -110,46 +186,86 @@ export class BillingService {
       prisma.invoice.update({
         where: { id: invoiceId },
         data: {
-          status: 'PAID',
-          paidAt: new Date(),
+          status: newStatus,
+          paidAt: newStatus === 'PAID' ? new Date() : debtInfo.invoice.paidAt,
         },
       }),
     ]);
 
-    logger.info(`Pago de $${amount} registrado para la factura ${invoice.invoiceNumber}. Cliente: ${invoice.client.fullName}`);
+    logger.info(`Pago de ${amount} registrado para factura ${invoiceId}. Nuevo Estado: ${newStatus}`);
 
-    // Check if the client still has pending or overdue invoices
-    const pendingInvoices = await prisma.invoice.findFirst({
-      where: {
-        clientId: invoice.clientId,
-        status: { in: ['PENDING', 'OVERDUE'] },
-      },
-    });
+    if (newStatus === 'PAID') {
+      const pendingInvoices = await prisma.invoice.findFirst({
+        where: {
+          clientId: debtInfo.invoice.clientId,
+          status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] },
+        },
+      });
 
-    // If client is suspended and has NO pending debts, reactivate their services
-    if (!pendingInvoices && invoice.contract.status === 'SUSPENDED') {
-      logger.info(`El cliente ${invoice.client.fullName} saldó sus deudas. Iniciando reactivación automática...`);
-      try {
-        await MikrotikService.unblockContract(invoice.contractId, 'PAYMENT');
-      } catch (mikrotikErr: any) {
-        logger.error(`Error reactivando cliente por MikroTik después del pago: ${mikrotikErr.message}`);
-        // We do not roll back payment, just log the Mikrotik error so the admin can retry manually
+      if (!pendingInvoices && debtInfo.invoice.contract.status === 'SUSPENDED') {
+        // [MODIFICACIÓN MANUAL] La reconexión ya no es automática, depende del flag `reconnect`.
+        if (reconnect) {
+          logger.info(`El cliente saldó sus deudas. Reconectando manualmente por instrucción del operador...`);
+          try {
+            await MikrotikService.unblockContract(debtInfo.invoice.contractId, 'PAYMENT');
+            
+            const settings = await this.getSystemSettings();
+            const reconFee = Number(settings.reconnectionFee);
+            if (reconFee > 0) {
+              const openInvoice = await prisma.invoice.findFirst({
+                where: { contractId: debtInfo.invoice.contractId, status: { in: ['PENDING', 'PARTIAL'] } }
+              });
+              
+              if (openInvoice) {
+                await prisma.invoiceItem.create({
+                  data: {
+                    invoiceId: openInvoice.id,
+                    description: 'Cargo de Reconexión de Servicio',
+                    amount: reconFee,
+                    type: 'RECONNECTION_FEE'
+                  }
+                });
+              } else {
+                const timestamp = Date.now().toString().slice(-4);
+                const invoiceNumber = `REC-${debtInfo.invoice.clientId}-${timestamp}`;
+                await prisma.invoice.create({
+                  data: {
+                    contractId: debtInfo.invoice.contractId,
+                    clientId: debtInfo.invoice.clientId,
+                    invoiceNumber,
+                    periodStart: new Date(),
+                    periodEnd: new Date(),
+                    amount: reconFee,
+                    dueDate: new Date(),
+                    status: 'PENDING',
+                    items: {
+                      create: [{
+                        description: 'Cargo de Reconexión de Servicio',
+                        amount: reconFee,
+                        type: 'RECONNECTION_FEE'
+                      }]
+                    }
+                  }
+                });
+              }
+            }
+          } catch (mikrotikErr: any) {
+            logger.error(`Error reactivando cliente por MikroTik después del pago: ${mikrotikErr.message}`);
+          }
+        } else {
+          logger.info(`El cliente saldó sus deudas, pero la reconexión automática está pausada (esperando acción manual).`);
+        }
       }
     }
 
     return { payment, invoice: updatedInvoice };
   }
 
-  /**
-   * Runs daily check for invoices that are overdue (past due date)
-   */
   static async checkOverdueInvoices(date: Date = new Date()): Promise<{ updatedCount: number }> {
     logger.info(`Revisando facturas vencidas...`);
-    
-    // Find all pending invoices past their due date
     const overdueInvoices = await prisma.invoice.findMany({
       where: {
-        status: 'PENDING',
+        status: { in: ['PENDING', 'PARTIAL'] },
         dueDate: { lt: date },
       },
     });
@@ -165,20 +281,15 @@ export class BillingService {
     return { updatedCount: overdueInvoices.length };
   }
 
-  /**
-   * Motor de Cortes: Suspends users who have unpaid invoices past the grace days
-   */
   static async processAutomaticCuts(date: Date = new Date()): Promise<{ cutsExecuted: number; errors: number }> {
     logger.info(`Iniciando motor de cortes automáticos...`);
 
-    // Find all service contracts that are ACTIVE but have invoices that are OVERDUE and past grace days
-    // grace_days is defined on the contract level.
     const activeContracts = await prisma.serviceContract.findMany({
       where: { status: 'ACTIVE' },
       include: {
         client: true,
         invoices: {
-          where: { status: { in: ['PENDING', 'OVERDUE'] } },
+          where: { status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] } },
         },
       },
     });
@@ -190,7 +301,6 @@ export class BillingService {
       const unpaidInvoices = contract.invoices;
       if (unpaidInvoices.length === 0) continue;
 
-      // Check if any invoice is past the grace period
       let shouldCut = false;
       
       for (const invoice of unpaidInvoices) {
@@ -204,17 +314,16 @@ export class BillingService {
       }
 
       if (shouldCut) {
-        logger.info(`Contrato ${contract.id} (Cliente: ${contract.client.fullName}) califica para corte. (Bloqueo automático en MikroTik deshabilitado temporalmente)`);
+        logger.info(`Contrato ${contract.id} (Cliente: ${contract.clientId}) califica para corte.`);
         /* 
         try {
           await MikrotikService.blockContract(contract.id, 'CRON_JOB');
           cutsExecuted++;
         } catch (err: any) {
-          logger.error(`Error ejecutando corte automático para contrato ${contract.id}: ${err.message}`);
+          logger.error(`Error ejecutando corte automático para contrato ${contract.id}:`);
           errors++;
         }
         */
-        // Se cuenta como ejecutado lógicamente para el log
         cutsExecuted++;
       }
     }

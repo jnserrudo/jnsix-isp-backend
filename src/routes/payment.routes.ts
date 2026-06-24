@@ -8,5 +8,7 @@ router.use(authenticateJWT);
 
 router.get('/', PaymentController.list);
 router.post('/', requireRole(['ADMIN', 'OPERATOR']), PaymentController.create);
+router.put('/:id', requireRole(['ADMIN', 'OPERATOR']), PaymentController.update);
+router.delete('/:id', requireRole(['ADMIN']), PaymentController.delete);
 
 export default router;

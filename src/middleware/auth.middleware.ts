@@ -15,10 +15,16 @@ export const authenticateJWT = (
   res: Response,
   next: NextFunction
 ) => {
-  const authHeader = req.headers.authorization;
+  let token: string | undefined;
 
+  const authHeader = req.headers.authorization;
   if (authHeader) {
-    const token = authHeader.split(' ')[1]; // Bearer TOKEN
+    token = authHeader.split(' ')[1]; // Bearer TOKEN
+  } else if (req.query.token) {
+    token = req.query.token as string;
+  }
+
+  if (token) {
     const secret = process.env.JWT_SECRET || 'jnsix-isp-super-secret-key-change-this-in-production';
 
     jwt.verify(token, secret, (err: any, decoded: any) => {
