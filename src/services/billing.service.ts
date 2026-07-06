@@ -21,7 +21,13 @@ export class BillingService {
   static async getInvoiceDebt(invoiceId: string, date: Date = new Date()) {
     const invoice = await prisma.invoice.findUnique({
       where: { id: invoiceId },
-      include: { items: true, payments: true, contract: true }
+      include: {
+        items: true,
+        payments: {
+          where: { deletedAt: null }
+        },
+        contract: true
+      }
     });
     if (!invoice) throw new Error('Factura no encontrada');
 

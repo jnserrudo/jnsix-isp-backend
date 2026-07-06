@@ -62,6 +62,13 @@ enum PaymentMethod {
   OTHER
 }
 
+enum VoidReason {
+  ERROR_TIPEO
+  ANULACION
+  EDICION_MONTO
+  OTRO
+}
+
 enum ActionType {
   BLOCK
   UNBLOCK
@@ -346,6 +353,12 @@ model Payment {
   createdAt     DateTime      @default(now()) @map("created_at")
   deletedAt     DateTime?     @map("deleted_at")
   deletedBy     String?       @map("deleted_by")
+
+  voidReason   VoidReason?   @map("void_reason")
+  voidNotes    String?       @map("void_notes") @db.Text
+  replacedById String?       @map("replaced_by_id")
+  replacedBy   Payment?      @relation("PaymentReplacement", fields: [replacedById], references: [id])
+  replacements Payment[]     @relation("PaymentReplacement")
 
   invoice    Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   client     Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)

@@ -13,6 +13,7 @@ router.get('/:id', InvoiceController.getById);
 router.post('/trigger-billing', requireRole(['ADMIN']), InvoiceController.triggerBilling);
 router.post('/trigger-cuts', requireRole(['ADMIN']), InvoiceController.triggerCuts);
 router.put('/:id/expire', requireRole(['ADMIN', 'OPERATOR']), InvoiceController.expireInvoice);
+router.put('/:id', requireRole(['ADMIN', 'OPERATOR']), InvoiceController.update);
 
 router.post('/:id/items', requireRole(['ADMIN', 'OPERATOR']), InvoiceController.addItem);
 router.delete('/:id/items/:itemId', requireRole(['ADMIN', 'OPERATOR']), InvoiceController.deleteItem);

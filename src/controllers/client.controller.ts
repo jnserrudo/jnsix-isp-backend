@@ -50,6 +50,13 @@ export class ClientController {
             orderBy: { dueDate: 'desc' },
           },
           payments: {
+            include: {
+              replacedBy: {
+                include: {
+                  invoice: true
+                }
+              }
+            },
             orderBy: { paymentDate: 'desc' },
           },
         },

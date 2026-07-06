@@ -45,6 +45,76 @@ export class InvoiceController {
     }
   }
 
+  static async update(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { dueDate, periodStart, periodEnd, amount, notes, graceDays, reason, observaciones } = req.body;
+
+      if (!reason) {
+        return res.status(400).json({ error: 'El motivo de la modificación (reason) es obligatorio.' });
+      }
+
+      const existingInvoice = await prisma.invoice.findUnique({
+        where: { id },
+        include: { contract: true, client: true }
+      });
+      if (!existingInvoice) return res.status(404).json({ error: 'Factura no encontrada' });
+
+      // Start transaction to update invoice and optionally the contract's graceDays
+      const updated = await prisma.$transaction(async (tx) => {
+        const updateData: any = {};
+        if (dueDate) updateData.dueDate = new Date(dueDate);
+        if (periodStart) updateData.periodStart = new Date(periodStart);
+        if (periodEnd) updateData.periodEnd = new Date(periodEnd);
+        if (amount !== undefined) updateData.amount = Number(amount);
+        if (notes !== undefined) updateData.notes = notes;
+
+        const inv = await tx.invoice.update({
+          where: { id },
+          data: updateData
+        });
+
+        if (graceDays !== undefined && existingInvoice.contractId) {
+          await tx.serviceContract.update({
+            where: { id: existingInvoice.contractId },
+            data: { graceDays: Number(graceDays) }
+          });
+        }
+
+        return inv;
+      });
+
+      // Recalculate status based on new dueDate / amount
+      const debtInfo = await BillingService.getInvoiceDebt(id);
+      const newStatus = debtInfo.balance <= 0 ? 'PAID' : (debtInfo.daysLate > 0 ? 'OVERDUE' : 'PENDING');
+      const finalInvoice = await prisma.invoice.update({
+        where: { id },
+        data: { status: newStatus, paidAt: newStatus === 'PAID' ? new Date() : null },
+        include: { contract: true, client: true }
+      });
+
+      const clientInfo = `${existingInvoice.client.fullName} (${existingInvoice.client.clientCode})`;
+      const user = (req as any).user;
+      await AuditService.logAction({
+        entity: AuditEntity.INVOICE,
+        entityId: id,
+        action: AuditAction.UPDATE,
+        description: `Factura ${existingInvoice.invoiceNumber} de ${clientInfo} modificada manualmente. Motivo: ${reason}. Obs: ${observaciones || 'Sin observaciones'}`,
+        userId: user?.id,
+        userEmail: user?.email,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        dataBefore: existingInvoice,
+        dataAfter: finalInvoice
+      });
+
+      return res.json({ message: 'Factura actualizada con éxito', invoice: finalInvoice });
+    } catch (err: any) {
+      logger.error(`Error actualizando factura: ${err.message}`);
+      return res.status(500).json({ error: 'Fallo al actualizar factura' });
+    }
+  }
+
   static billingProgress(req: Request, res: Response) {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');

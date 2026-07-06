@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticateJWT);
 
 router.get('/', PaymentController.list);
+router.get('/rectifications', requireRole(['ADMIN', 'OPERATOR']), PaymentController.listRectifications);
 router.post('/', requireRole(['ADMIN', 'OPERATOR']), PaymentController.create);
 router.put('/:id', requireRole(['ADMIN', 'OPERATOR']), PaymentController.update);
 router.delete('/:id', requireRole(['ADMIN']), PaymentController.delete);
