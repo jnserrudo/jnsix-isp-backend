@@ -90,8 +90,7 @@ export class MikrotikManagerService {
     const isMock =
       process.env.SIMULATE_MIKROTIK === 'true' ||
       credentials.host === '127.0.0.1' ||
-      credentials.host === 'localhost' ||
-      credentials.host.startsWith('192.168.');
+      credentials.host === 'localhost';
 
     const timestamp = new Date().toISOString();
 

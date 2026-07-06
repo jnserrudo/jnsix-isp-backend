@@ -32,6 +32,16 @@ interface MikrotikCredentials {
 
 export class MikrotikService {
   /**
+   * node-routeros only accepts string arrays (=key=value). Plain objects are ignored.
+   */
+  private static formatRosArgs(args: Record<string, string | number | boolean>): string[] {
+    return Object.entries(args).map(([key, value]) => {
+      const paramKey = key.startsWith('=') || key.startsWith('?') ? key : `=${key}`;
+      return `${paramKey}=${value}`;
+    });
+  }
+
+  /**
    * Helper to execute API commands on a specific MikroTik Node.
    * If connection fails and we are in dev/simulation mode, it simulates success.
    */
@@ -48,8 +58,7 @@ export class MikrotikService {
     const isMock = 
       process.env.SIMULATE_MIKROTIK === 'true' ||
       host === '127.0.0.1' || 
-      host === 'localhost' || 
-      host.startsWith('192.168.');
+      host === 'localhost';
 
     if (isMock) {
       logger.warn(`[SIMULACIÓN] Simulando comando en MikroTik: ${command} con args: ${JSON.stringify(args)}`);
@@ -75,7 +84,8 @@ export class MikrotikService {
       
       let result;
       if (args) {
-        result = await conn.write(command, args);
+        const rosArgs = Array.isArray(args) ? args : this.formatRosArgs(args);
+        result = await conn.write(command, rosArgs);
       } else {
         result = await conn.write(command);
       }
@@ -175,14 +185,23 @@ export class MikrotikService {
         logger.info(`Bloqueando cliente IP: ${contract.staticIp} en nodo ${node.name}`);
         
         // Command: /ip/firewall/address-list/add =list=cortados =address=<ip> =comment=<client_name>
-        await this.executeCommand(credentials, '/ip/firewall/address-list/add', {
-          list: 'cortados',
-          address: contract.staticIp,
-          comment: contract.client.fullName,
-        });
+        try {
+          await this.executeCommand(credentials, '/ip/firewall/address-list/add', {
+            list: 'cortados',
+            address: contract.staticIp,
+            comment: contract.client.fullName,
+          });
+          logResponse = { mode: 'address-list', ip: contract.staticIp, action: 'added' };
+        } catch (addErr: any) {
+          const msg = (addErr.message || '').toLowerCase();
+          if (msg.includes('already') || msg.includes('such entry')) {
+            logResponse = { mode: 'address-list', ip: contract.staticIp, action: 'already_blocked' };
+          } else {
+            throw addErr;
+          }
+        }
 
         success = true;
-        logResponse = { mode: 'address-list', ip: contract.staticIp, action: 'added' };
       } else {
         throw new Error('El contrato no tiene usuario PPPoE ni IP estática configurada para realizar el bloqueo.');
       }
@@ -334,6 +353,65 @@ export class MikrotikService {
   /**
    * Query real diagnostic data from MikroTik or simulate if mock.
    */
+  /**
+   * Check if a contract is currently blocked in MikroTik
+   */
+  static async isContractBlocked(contractId: string): Promise<boolean> {
+    const contract = await prisma.serviceContract.findUnique({
+      where: { id: contractId },
+      include: { node: true }
+    });
+
+    if (!contract || !contract.node) {
+      return false;
+    }
+
+    const credentials = {
+      host: contract.node.mikrotikHost,
+      port: contract.node.mikrotikPort,
+      user: contract.node.mikrotikUser,
+      pass: contract.node.mikrotikPassword,
+    };
+
+    const isMock = 
+      process.env.SIMULATE_MIKROTIK === 'true' ||
+      contract.node.mikrotikHost === '127.0.0.1' || 
+      contract.node.mikrotikHost === 'localhost' || 
+      contract.node.mikrotikHost.startsWith('192.168.');
+
+    if (isMock) {
+      return contract.status === 'SUSPENDED';
+    }
+
+    try {
+      // Check PPPoE blocking
+      if (contract.pppoeUsername) {
+        const secret = await this.executeCommand(credentials, '/ppp/secret/print', {
+          '?name': contract.pppoeUsername
+        });
+        if (Array.isArray(secret) && secret.length > 0) {
+          const disabled = secret[0].disabled === 'true' || secret[0].disabled === true;
+          if (disabled) return true;
+        }
+      }
+
+      // Check Static IP blocking (firewall address-list)
+      if (contract.staticIp) {
+        const blockList = await this.executeCommand(credentials, '/ip/firewall/address-list/print', {
+          '?address': contract.staticIp,
+          '?list': 'cortados'
+        });
+        const isBlocked = Array.isArray(blockList) && blockList.length > 0;
+        if (isBlocked) return true;
+      }
+
+      return false;
+    } catch (err: any) {
+      logger.error(`Error checking block status for contract ${contractId}: ${err.message}`);
+      return false;
+    }
+  }
+
   static async getDiagnostics(contractId: string): Promise<any> {
     const contract = await prisma.serviceContract.findUnique({
       where: { id: contractId },

@@ -17,6 +17,13 @@ export class ClientController {
               node: true,
             },
           },
+          invoices: {
+            select: {
+              id: true,
+              status: true,
+              dueDate: true
+            }
+          }
         },
         orderBy: { fullName: 'asc' },
       });
@@ -63,7 +70,21 @@ export class ClientController {
         }
       }));
 
-      return res.json({ ...client, invoices: invoicesWithDebt });
+      const auditLogs = await prisma.auditLog.findMany({
+        where: { entity: 'CLIENT', entityId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        include: {
+          user: {
+            select: {
+              fullName: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      return res.json({ ...client, invoices: invoicesWithDebt, auditLogs });
     } catch (err: any) {
       logger.error(`Error obteniendo cliente ${req.params.id}: ${err.message}`);
       return res.status(500).json({ error: 'Error al obtener el cliente' });
@@ -161,7 +182,7 @@ export class ClientController {
         entity: 'CLIENT',
         entityId: client.id,
         action: 'CREATE',
-        description: `Cliente creado: ${client.fullName}`,
+        description: `Cliente creado: ${client.fullName} (${client.clientCode})`,
         userId: user?.id,
         userEmail: user?.email,
         ipAddress: req.ip,
@@ -265,7 +286,7 @@ export class ClientController {
         entity: 'CLIENT',
         entityId: client.id,
         action: 'UPDATE',
-        description: `Cliente modificado: ${updated.fullName}`,
+        description: `Cliente modificado: ${updated.fullName} (${updated.clientCode})`,
         userId: user?.id,
         userEmail: user?.email,
         ipAddress: req.ip,
@@ -292,7 +313,7 @@ export class ClientController {
         entity: 'CLIENT',
         entityId: id,
         action: 'DELETE',
-        description: `Cliente eliminado: ${client?.fullName || id}`,
+        description: `Cliente eliminado: ${client ? `${client.fullName} (${client.clientCode})` : id}`,
         userId: user?.id,
         userEmail: user?.email,
         ipAddress: req.ip,
@@ -327,12 +348,18 @@ export class ClientController {
         results.push({ contractId: contract.id, ...result });
       }
 
+      const client = await prisma.client.findUnique({
+        where: { id },
+        select: { fullName: true, clientCode: true }
+      });
+      const clientInfo = client ? `${client.fullName} (${client.clientCode})` : `ID: ${id}`;
+
       const user = (req as AuthenticatedRequest).user;
       await AuditService.logAction({
         entity: 'CLIENT',
         entityId: id,
         action: 'BLOCK',
-        description: `Corte de servicio manual ejecutado. Contratos afectados: ${contracts.length}`,
+        description: `Corte de servicio manual ejecutado para el abonado ${clientInfo}. Contratos afectados: ${contracts.length}`,
         userId: user?.id,
         userEmail: user?.email,
         ipAddress: req.ip,
@@ -366,12 +393,18 @@ export class ClientController {
         results.push({ contractId: contract.id, ...result });
       }
 
+      const client = await prisma.client.findUnique({
+        where: { id },
+        select: { fullName: true, clientCode: true }
+      });
+      const clientInfo = client ? `${client.fullName} (${client.clientCode})` : `ID: ${id}`;
+
       const user = (req as AuthenticatedRequest).user;
       await AuditService.logAction({
         entity: 'CLIENT',
         entityId: id,
         action: 'UNBLOCK',
-        description: `Reactivación manual ejecutada. Contratos afectados: ${contracts.length}`,
+        description: `Reactivación manual ejecutada para el abonado ${clientInfo}. Contratos afectados: ${contracts.length}`,
         userId: user?.id,
         userEmail: user?.email,
         ipAddress: req.ip,
@@ -420,6 +453,63 @@ export class ClientController {
     } catch (err: any) {
       logger.error(`Error obteniendo diagnóstico del cliente ${req.params.id}: ${err.message}`);
       return res.status(500).json({ error: err.message || 'Error al obtener diagnóstico de red' });
+    }
+  }
+
+  static async getSyncStatus(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const client = await prisma.client.findUnique({
+        where: { id },
+        include: {
+          contracts: {
+            include: {
+              invoices: {
+                where: { status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] } },
+              },
+            },
+          },
+        },
+      });
+
+      if (!client) {
+        return res.status(404).json({ error: 'Cliente no encontrado' });
+      }
+
+      const contract = client.contracts.find(c => c.status === 'ACTIVE' || c.status === 'SUSPENDED');
+      if (!contract) {
+        return res.json({ syncStatus: 'NO_CONTRACT', isBlocked: false, hasOverdueDebt: false });
+      }
+
+      // Check if contract is blocked in MikroTik
+      const isBlocked = await MikrotikService.isContractBlocked(contract.id);
+
+      // Check if client has overdue debt
+      const now = new Date();
+      const hasOverdueDebt = contract.invoices.some(invoice => {
+        const graceLimitDate = new Date(invoice.dueDate);
+        graceLimitDate.setDate(graceLimitDate.getDate() + contract.graceDays);
+        return now > graceLimitDate;
+      });
+
+      // Determine sync status
+      let syncStatus = 'SYNCED';
+      
+      if (hasOverdueDebt && !isBlocked) {
+        syncStatus = 'DELINQUENT_BUT_ACTIVE'; // Cliente moroso pero tiene internet
+      } else if (!hasOverdueDebt && isBlocked) {
+        syncStatus = 'ACTIVE_BUT_SUSPENDED'; // Cliente al día pero sin internet
+      }
+
+      return res.json({
+        syncStatus,
+        isBlocked,
+        hasOverdueDebt,
+        contractStatus: contract.status,
+      });
+    } catch (err: any) {
+      logger.error(`Error obteniendo estado de sincronización del cliente ${req.params.id}: ${err.message}`);
+      return res.status(500).json({ error: err.message || 'Error al obtener estado de sincronización' });
     }
   }
 }

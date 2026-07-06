@@ -17,5 +17,6 @@ router.delete('/:id', requireRole(['ADMIN']), ClientController.delete);
 router.post('/:id/block', requireRole(['ADMIN', 'OPERATOR']), ClientController.manualBlock);
 router.post('/:id/unblock', requireRole(['ADMIN', 'OPERATOR']), ClientController.manualUnblock);
 router.get('/:id/diagnostics', requireRole(['ADMIN', 'OPERATOR', 'READONLY']), ClientController.getDiagnostics);
+router.get('/:id/sync-status', requireRole(['ADMIN', 'OPERATOR', 'READONLY']), ClientController.getSyncStatus);
 
 export default router;

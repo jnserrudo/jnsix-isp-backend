@@ -4,6 +4,8 @@ import prisma from './db.service';
 export const billingProgressEmitter = new EventEmitter();
 import logger from '../utils/logger';
 import { MikrotikService } from './mikrotik.service';
+import { AuditService } from './audit.service';
+import { AuditEntity, AuditAction } from '@prisma/client';
 
 export class BillingService {
   static async getSystemSettings() {
@@ -208,6 +210,23 @@ export class BillingService {
           logger.info(`El cliente saldó sus deudas. Reconectando manualmente por instrucción del operador...`);
           try {
             await MikrotikService.unblockContract(debtInfo.invoice.contractId, 'PAYMENT');
+            try {
+              const fullContract = await prisma.serviceContract.findUnique({
+                where: { id: debtInfo.invoice.contractId },
+                include: { client: true, node: true }
+              });
+              if (fullContract) {
+                await AuditService.logAction({
+                  entity: AuditEntity.CLIENT,
+                  entityId: fullContract.clientId,
+                  action: AuditAction.UPDATE,
+                  description: `Servicio REACTIVADO automáticamente por pago para el abonado ${fullContract.client.fullName} (${fullContract.client.clientCode}) en nodo ${fullContract.node.name}`,
+                  success: true
+                });
+              }
+            } catch (auditErr: any) {
+              logger.error(`Error escribiendo auditoría de reactivación automática por pago: ${auditErr.message}`);
+            }
             
             const settings = await this.getSystemSettings();
             const reconFee = Number(settings.reconnectionFee);
@@ -281,13 +300,19 @@ export class BillingService {
     return { updatedCount: overdueInvoices.length };
   }
 
-  static async processAutomaticCuts(date: Date = new Date()): Promise<{ cutsExecuted: number; errors: number }> {
-    logger.info(`Iniciando motor de cortes automáticos...`);
+  static async processAutomaticCuts(date: Date = new Date(), nodeId?: string): Promise<{ cutsExecuted: number; errors: number }> {
+    logger.info(`Iniciando motor de cortes automáticos... (nodeId: ${nodeId || 'ALL'})`);
+
+    const whereClause: any = { status: 'ACTIVE' };
+    if (nodeId) {
+      whereClause.nodeId = nodeId;
+    }
 
     const activeContracts = await prisma.serviceContract.findMany({
-      where: { status: 'ACTIVE' },
+      where: whereClause,
       include: {
         client: true,
+        node: true,
         invoices: {
           where: { status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] } },
         },
@@ -302,11 +327,11 @@ export class BillingService {
       if (unpaidInvoices.length === 0) continue;
 
       let shouldCut = false;
-      
+
       for (const invoice of unpaidInvoices) {
         const graceLimitDate = new Date(invoice.dueDate);
         graceLimitDate.setDate(graceLimitDate.getDate() + contract.graceDays);
-        
+
         if (date > graceLimitDate) {
           shouldCut = true;
           break;
@@ -315,16 +340,24 @@ export class BillingService {
 
       if (shouldCut) {
         logger.info(`Contrato ${contract.id} (Cliente: ${contract.clientId}) califica para corte.`);
-        /* 
         try {
           await MikrotikService.blockContract(contract.id, 'CRON_JOB');
           cutsExecuted++;
+          try {
+            await AuditService.logAction({
+              entity: AuditEntity.CLIENT,
+              entityId: contract.clientId,
+              action: AuditAction.UPDATE,
+              description: `Servicio SUSPENDIDO automáticamente por mora para el abonado ${contract.client.fullName} (${contract.client.clientCode}) en nodo ${contract.node.name}`,
+              success: true
+            });
+          } catch (auditErr: any) {
+            logger.error(`Error escribiendo auditoría de corte automático: ${auditErr.message}`);
+          }
         } catch (err: any) {
-          logger.error(`Error ejecutando corte automático para contrato ${contract.id}:`);
+          logger.error(`Error ejecutando corte automático para contrato ${contract.id}: ${err.message}`);
           errors++;
         }
-        */
-        cutsExecuted++;
       }
     }
 

@@ -48,11 +48,18 @@ export class PaymentController {
         Boolean(reconnect)
       );
 
+      const paymentWithDetails = await prisma.payment.findUnique({
+        where: { id: result.payment.id },
+        include: { invoice: true, client: true }
+      });
+      const clientInfo = paymentWithDetails ? `${paymentWithDetails.client.fullName} (${paymentWithDetails.client.clientCode})` : 'Desconocido';
+      const invoiceNum = paymentWithDetails?.invoice?.invoiceNumber || invoiceId;
+
       await AuditService.logAction({
         entity: AuditEntity.PAYMENT,
         entityId: result.payment.id,
         action: AuditAction.CREATE,
-        description: `Pago registrado: $${amount} via ${paymentMethod} para la factura ${invoiceId}`,
+        description: `Pago registrado: $${amount} via ${paymentMethod} para la factura ${invoiceNum} del abonado ${clientInfo}`,
         userId: req.user?.id,
         userEmail: req.user?.email,
         ipAddress: req.ip,
@@ -92,11 +99,18 @@ export class PaymentController {
         data: { status: newStatus, paidAt: newStatus === 'PAID' ? new Date() : null }
       });
 
-            await AuditService.logAction({
+      const paymentWithDetails = await prisma.payment.findUnique({
+        where: { id },
+        include: { invoice: true, client: true }
+      });
+      const clientInfo = paymentWithDetails ? `${paymentWithDetails.client.fullName} (${paymentWithDetails.client.clientCode})` : 'Desconocido';
+      const invoiceNum = paymentWithDetails?.invoice?.invoiceNumber || existingPayment.invoiceId;
+
+      await AuditService.logAction({
         entity: AuditEntity.PAYMENT,
         entityId: id,
         action: AuditAction.UPDATE,
-        description: `Pago actualizado: $${amount} via ${paymentMethod}`,
+        description: `Pago actualizado: $${amount || existingPayment.amount} via ${paymentMethod || existingPayment.paymentMethod} para la factura ${invoiceNum} del abonado ${clientInfo}`,
         userId: req.user?.id,
         dataBefore: existingPayment,
         dataAfter: updatedPayment
@@ -126,11 +140,16 @@ export class PaymentController {
         data: { status: newStatus, paidAt: newStatus === 'PAID' ? new Date() : null }
       });
 
-            await AuditService.logAction({
+      const client = await prisma.client.findUnique({ where: { id: existingPayment.clientId }, select: { fullName: true, clientCode: true } });
+      const invoice = await prisma.invoice.findUnique({ where: { id: existingPayment.invoiceId }, select: { invoiceNumber: true } });
+      const clientInfo = client ? `${client.fullName} (${client.clientCode})` : 'Desconocido';
+      const invoiceNum = invoice?.invoiceNumber || existingPayment.invoiceId;
+
+      await AuditService.logAction({
         entity: AuditEntity.PAYMENT,
         entityId: id,
         action: AuditAction.DELETE,
-        description: 'Pago eliminado',
+        description: `Pago eliminado: $${existingPayment.amount} del abonado ${clientInfo} correspondiente a la factura ${invoiceNum}`,
         userId: req.user?.id,
         dataBefore: existingPayment
       });

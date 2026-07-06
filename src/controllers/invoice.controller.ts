@@ -99,16 +99,21 @@ export class InvoiceController {
    */
   static async triggerCuts(req: Request, res: Response) {
     try {
-      const { date } = req.body;
+      const { date, nodeId } = req.body;
       const runDate = date ? new Date(date) : new Date();
 
-      const result = await BillingService.processAutomaticCuts(runDate);
+      const result = await BillingService.processAutomaticCuts(runDate, nodeId || undefined);
 
       const user = (req as any).user;
+      let nodeLabel = 'Todos los nodos';
+      if (nodeId) {
+        const node = await prisma.node.findUnique({ where: { id: nodeId }, select: { name: true } });
+        if (node) nodeLabel = `Nodo: ${node.name}`;
+      }
       await AuditService.logAction({
         entity: AuditEntity.SYSTEM,
         action: AuditAction.SYSTEM_JOB,
-        description: `Motor de cortes ejecutado manualmente. Clientes suspendidos: ${result.cutsExecuted}`,
+        description: `Motor de cortes ejecutado manualmente (${nodeLabel}). Clientes suspendidos: ${result.cutsExecuted}`,
         userId: user?.id,
         userEmail: user?.email,
         ipAddress: req.ip,
@@ -127,7 +132,7 @@ export class InvoiceController {
       const { id } = req.params;
       const invoice = await prisma.invoice.findUnique({
         where: { id },
-        include: { contract: true },
+        include: { contract: true, client: true },
       });
       if (!invoice) return res.status(404).json({ error: 'Factura no encontrada' });
       if (invoice.status === 'PAID') return res.status(400).json({ error: 'No se puede vencer una factura pagada' });
@@ -145,11 +150,14 @@ export class InvoiceController {
       });
 
       const user = (req as any).user;
+      const clientName = invoice.client?.fullName || 'Desconocido';
+      const clientCode = invoice.client?.clientCode || 'N/A';
+
       await AuditService.logAction({
         entity: AuditEntity.INVOICE,
         entityId: id,
         action: AuditAction.UPDATE,
-        description: `Factura forzada a vencida manualmente`,
+        description: `Factura ${invoice.invoiceNumber} forzada a vencida manualmente para el abonado ${clientName} (${clientCode})`,
         userId: user?.id,
         userEmail: user?.email,
         ipAddress: req.ip,
