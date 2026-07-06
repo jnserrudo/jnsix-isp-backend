@@ -43,6 +43,16 @@ export class MikrotikManagerService {
   /**
    * Translates RouterOS native errors into friendly messages for the Administrator.
    */
+  private static formatRosArgs(args: Record<string, string | number | boolean>): string[] {
+    return Object.entries(args).map(([key, value]) => {
+      const paramKey = key.startsWith('=') || key.startsWith('?') ? key : `=${key}`;
+      return `${paramKey}=${value}`;
+    });
+  }
+
+  /**
+   * Translates RouterOS native errors into friendly messages for the Administrator.
+   */
   private static translateError(errorMsg: string): string {
     const msg = errorMsg.toLowerCase();
     if (msg.includes('already exists')) {
@@ -122,7 +132,13 @@ export class MikrotikManagerService {
 
     try {
       await conn.connect();
-      const rawResult = args ? await conn.write(command, args) : await conn.write(command);
+      let rawResult;
+      if (args) {
+        const rosArgs = Array.isArray(args) ? args : this.formatRosArgs(args);
+        rawResult = await conn.write(command, rosArgs);
+      } else {
+        rawResult = await conn.write(command);
+      }
       await conn.close();
 
       return {
