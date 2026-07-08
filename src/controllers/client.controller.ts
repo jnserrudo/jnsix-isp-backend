@@ -12,6 +12,7 @@ export class ClientController {
       const clients = await prisma.client.findMany({
         include: {
           contracts: {
+            where: { deletedAt: null },
             include: {
               plan: true,
               node: true,
@@ -41,6 +42,7 @@ export class ClientController {
         where: { id },
         include: {
           contracts: {
+            where: { deletedAt: null },
             include: {
               plan: true,
               node: true,
@@ -430,7 +432,7 @@ export class ClientController {
       const { id } = req.params;
       const client = await prisma.client.findUnique({
         where: { id },
-        include: { contracts: true }
+        include: { contracts: { where: { deletedAt: null } } }
       });
       if (!client) {
         return res.status(404).json({ error: 'Cliente no encontrado' });
@@ -470,6 +472,7 @@ export class ClientController {
         where: { id },
         include: {
           contracts: {
+            where: { deletedAt: null },
             include: {
               invoices: {
                 where: { status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] } },

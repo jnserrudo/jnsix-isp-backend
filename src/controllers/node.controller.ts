@@ -12,7 +12,7 @@ export class NodeController {
         orderBy: { name: 'asc' },
         include: {
           _count: {
-            select: { contracts: true }
+            select: { contracts: { where: { deletedAt: null } } }
           }
         }
       });
@@ -128,7 +128,7 @@ export class NodeController {
   static async delete(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const inUse = await prisma.serviceContract.findFirst({ where: { nodeId: id } });
+      const inUse = await prisma.serviceContract.findFirst({ where: { nodeId: id, deletedAt: null } });
       if (inUse) {
         return res.status(400).json({ error: 'No se puede eliminar el nodo porque tiene clientes asignados' });
       }

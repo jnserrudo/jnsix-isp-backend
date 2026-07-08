@@ -10,7 +10,7 @@ export class PlanController {
       const plans = await prisma.plan.findMany({
         include: {
           _count: {
-            select: { contracts: true }
+            select: { contracts: { where: { deletedAt: null } } }
           },
           contracts: {
             where: { status: 'ACTIVE' },
@@ -145,7 +145,7 @@ export class PlanController {
   static async delete(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const plan = await prisma.plan.findUnique({ where: { id }, include: { contracts: true } });
+      const plan = await prisma.plan.findUnique({ where: { id }, include: { contracts: { where: { deletedAt: null } } } });
       if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
 
       if (plan.contracts.length > 0) {

@@ -3,11 +3,13 @@ import prisma from '../services/db.service';
 import logger from '../utils/logger';
 import { AuditService } from '../services/audit.service';
 import { AuditEntity, AuditAction } from '@prisma/client';
+import { MikrotikService } from '../services/mikrotik.service';
 
 export class ContractController {
   static async list(req: Request, res: Response) {
     try {
       const contracts = await prisma.serviceContract.findMany({
+        where: { deletedAt: null },
         include: {
           client: true,
           plan: true,
@@ -128,8 +130,53 @@ export class ContractController {
         contractEnd,
       } = req.body;
 
-      const contract = await prisma.serviceContract.findUnique({ where: { id } });
+      const contract = await prisma.serviceContract.findUnique({ 
+        where: { id },
+        include: { node: true }
+      });
       if (!contract) return res.status(404).json({ error: 'Contrato no encontrado' });
+
+      // Check if we need to sync changes to MikroTik
+      const isSuspended = contract.status === 'SUSPENDED';
+      const staticIpChanged = staticIp !== undefined && staticIp !== contract.staticIp;
+      const pppoeUserChanged = pppoeUsername !== undefined && pppoeUsername !== contract.pppoeUsername;
+
+      if (isSuspended && (staticIpChanged || pppoeUserChanged)) {
+        try {
+          const credentials = {
+            host: contract.node.mikrotikHost,
+            port: contract.node.mikrotikPort,
+            user: contract.node.mikrotikUser,
+            pass: contract.node.mikrotikPassword,
+          };
+
+          // 1. Clean up old configuration on MikroTik
+          if (staticIpChanged && contract.staticIp) {
+            logger.info(`Limpiando IP vieja (${contract.staticIp}) de Address List en MikroTik por actualizacion de contrato`);
+            const items = await (MikrotikService as any).executeCommand(credentials, '/ip/firewall/address-list/print', {
+              '?list': 'cortados',
+              '?address': contract.staticIp,
+            });
+            if (Array.isArray(items) && items.length > 0) {
+              for (const item of items) {
+                await (MikrotikService as any).executeCommand(credentials, '/ip/firewall/address-list/remove', {
+                  numbers: item['.id'],
+                });
+              }
+            }
+          }
+
+          if (pppoeUserChanged && contract.pppoeUsername) {
+            logger.info(`Re-habilitando usuario PPPoE viejo (${contract.pppoeUsername}) en MikroTik por actualizacion de contrato`);
+            await (MikrotikService as any).executeCommand(credentials, '/ppp/secret/set', {
+              numbers: contract.pppoeUsername,
+              disabled: 'no',
+            });
+          }
+        } catch (err: any) {
+          logger.error(`Error al limpiar configuracion vieja en MikroTik: ${err.message}`);
+        }
+      }
 
       const updated = await prisma.serviceContract.update({
         where: { id },
@@ -148,6 +195,16 @@ export class ContractController {
           contractEnd: contractEnd ? new Date(contractEnd) : undefined,
         },
       });
+
+      // Apply new configuration block on MikroTik if suspended
+      if (updated.status === 'SUSPENDED' && (staticIpChanged || pppoeUserChanged)) {
+        try {
+          logger.info(`Aplicando bloqueo a la nueva configuracion del contrato ${id} en MikroTik`);
+          await MikrotikService.blockContract(updated.id, 'MANUAL');
+        } catch (err: any) {
+          logger.error(`Error al aplicar bloqueo a la nueva configuracion: ${err.message}`);
+        }
+      }
 
       const user = (req as any).user;
       await AuditService.logAction({
@@ -171,12 +228,33 @@ export class ContractController {
   }
 
   static async delete(req: Request, res: Response) {
+    const user = (req as any).user;
     try {
       const { id } = req.params;
-      const contract = await prisma.serviceContract.findUnique({ where: { id } });
-      await prisma.serviceContract.delete({ where: { id } });
+      const contract = await prisma.serviceContract.findUnique({ 
+        where: { id },
+        include: { node: true }
+      });
+      if (!contract) return res.status(404).json({ error: 'Contrato no encontrado' });
 
-      const user = (req as any).user;
+      // If suspended, unblock on MikroTik before deleting
+      if (contract.status === 'SUSPENDED') {
+        try {
+          logger.info(`Eliminando contrato suspendido ${id}, removiendo bloqueo en MikroTik primero`);
+          await MikrotikService.unblockContract(id, 'MANUAL');
+        } catch (err: any) {
+          logger.error(`Error al remover bloqueo de contrato eliminado: ${err.message}`);
+        }
+      }
+
+      await prisma.serviceContract.update({
+        where: { id },
+        data: {
+          deletedAt: new Date(),
+          deletedBy: user?.email || 'System',
+          status: 'CANCELLED',
+        },
+      });
       await AuditService.logAction({
         entity: AuditEntity.CONTRACT,
         entityId: id,
