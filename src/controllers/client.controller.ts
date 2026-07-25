@@ -117,6 +117,22 @@ export class ClientController {
     return res.json({ code });
   }
 
+  /**
+   * Generates a unique temporary DNI (e.g. "TEMP-12345678")
+   */
+  static async generateTempDni(req: Request, res: Response) {
+    let dni: string;
+    let attempts = 0;
+    do {
+      const random = Math.floor(10000000 + Math.random() * 90000000).toString();
+      dni = `TEMP-${random}`;
+      attempts++;
+      if (attempts > 50) break; // safety valve
+    } while (await prisma.client.findUnique({ where: { dni } }));
+
+    return res.json({ dni });
+  }
+
   static async create(req: Request, res: Response) {
     try {
       const {
